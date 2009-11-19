@@ -1,0 +1,4 @@
+$CC="gcc";
+$CFLAGS="-g -O2";
+$DEFS="-DHAVE_CONFIG_H";
+$LIBS="-lnsl ";

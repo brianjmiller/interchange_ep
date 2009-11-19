@@ -1,0 +1,23 @@
+# Copyright 2002-2007 Interchange Development Group and others
+# 
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.  See the LICENSE file for details.
+# 
+# $Id: attr_list.coretag,v 1.8 2008-07-12 19:27:12 docelic Exp $
+
+UserTag attr_list           addAttr
+UserTag attr_list           hasEndTag
+UserTag attr_list           PosNumber    0
+UserTag attr_list           noRearrange
+UserTag attr_list           Version      $Revision: 1.8 $
+UserTag attr_list           Routine      <<EOR
+sub {
+	my ($opt, $body) = @_;
+	if( ref $opt->{hash} ) {
+		$opt = $opt->{hash};
+	}
+	return Vend::Interpolate::tag_attr_list($body, $opt);
+}
+EOR
