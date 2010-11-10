@@ -1,6 +1,6 @@
 # Vend::Menu - Interchange menu processing routines
 #
-# $Id: Menu.pm,v 2.51 2008-04-11 09:04:16 jon Exp $
+# $Id: Menu.pm,v 2.53 2009-02-24 15:29:01 jon Exp $
 #
 # Copyright (C) 2002 Mike Heins, <mike@perusion.net>
 #
@@ -21,7 +21,7 @@
 
 package Vend::Menu;
 
-$VERSION = substr(q$Revision: 2.51 $, 10);
+$VERSION = substr(q$Revision: 2.53 $, 10);
 
 use Vend::Util;
 use strict;
@@ -331,7 +331,7 @@ my %transform = (
 			my @parms = split $Global::UrlSplittor, $row->{$_};
 			my @out;
 			for my $p (@parms) {
-				my ($parm, $val) = split /=/, $p;
+				my ($parm, $val) = split /=/, $p, 2;
 				$val = unhexify($val);
 				$val =~ s/\[cgi\s+([^\[]+)\]/$CGI::values{$1}/g;
 				$val =~ s/\[var\s+([^\[]+)\]/$::Variable->{$1}/g;
@@ -648,7 +648,7 @@ EOF
 			if(${vpf}submenu_image_left.substr(0,1) == '<')
 				out += ${vpf}submenu_image_left;
 			else
-				out += '<img src="' + ${vpf}submenu_image_left + '" border="0">';
+				out += '<img src="' + ${vpf}submenu_image_left + '" border="0"$Vend::Xtrailer>';
 		}
 		out += '</td><td><div';
 		
@@ -691,7 +691,7 @@ EOF
 			if(${vpf}submenu_image_right.substr(0,1) == '<')
 				out += ${vpf}submenu_image_right;
 			else
-				out += '<img src="' + ${vpf}submenu_image_right + '" border="0">';
+				out += '<img src="' + ${vpf}submenu_image_right + '" border="0"$Vend::Xtrailer>';
 		}
 		out += '</td></tr>';
 
@@ -1155,7 +1155,7 @@ function ${vpf}image_link (rec) {
 		out += rec[ ${vpf}IMG_UP ];
 		out += '"';
 		out += ${vpf}image_link_extra;
-		out += '>';
+		out += '$Vend::Xtrailer>';
 // alert('img=' + out);
 	}
 	else {
@@ -1247,7 +1247,7 @@ function ${vpf}tree_link (idx) {
 			tclass = ${vpf}link_class_open;
 			tstyle = ${vpf}link_style_open;
 			if(spec_toggle > 0) {
-				tanchor = '<img border="0" align="absbottom"  src="' + ${vpf}specific_image_base + l[${vpf}IMG_DN] + '">';
+				tanchor = '<img border="0" align="absbottom"  src="' + ${vpf}specific_image_base + l[${vpf}IMG_DN] + '"$Vend::Xtrailer>';
 			}
 			else {
 				tanchor = ${vpf}toggle_anchor_open;
@@ -1258,7 +1258,7 @@ function ${vpf}tree_link (idx) {
 			tclass = ${vpf}link_class_closed;
 			tstyle = ${vpf}link_style_closed;
 			if(spec_toggle > 0) {
-				tanchor = '<img border="0" align="absbottom"  src="' + ${vpf}specific_image_base + l[${vpf}IMG_UP] + '">';
+				tanchor = '<img border="0" align="absbottom"  src="' + ${vpf}specific_image_base + l[${vpf}IMG_UP] + '"$Vend::Xtrailer>';
 // if(alert_shown < 2) {
 // alert('tanchor=' + tanchor);
 // alert_shown = 2;
@@ -1315,7 +1315,7 @@ function ${vpf}tree_link (idx) {
 				if(${vpf}icon[ ext ]) {
 					out += '<img border="0" align="absbottom" src="';
 					out += ${vpf}icon[ ext ];
-					out += '">';
+					out += '"$Vend::Xtrailer>';
 				}
 			}
 			if(${vpf}specific_image_link) 
@@ -1597,7 +1597,7 @@ function ${vpf}image_link (rec) {
 		out += rec[ ${vpf}IMG_UP ];
 		out += '"';
 		out += ${vpf}image_link_extra;
-		out += '>';
+		out += '$Vend::Xtrailer>';
 // alert('img=' + out);
 	}
 	else {
@@ -1644,7 +1644,7 @@ function ${vpf}tree_link (idx) {
 			tclass = ${vpf}link_class_open;
 			tstyle = ${vpf}link_style_open;
 			if(spec_toggle > 0) {
-				tanchor = '<img border="0" src="' + ${vpf}specific_image_base + l[${vpf}IMG_DN] + '">';
+				tanchor = '<img border="0" src="' + ${vpf}specific_image_base + l[${vpf}IMG_DN] + '"$Vend::Xtrailer>';
 // if(alert_shown < 2) {
 // alert('tanchor=' + tanchor);
 // alert_shown = 2;
@@ -1659,7 +1659,7 @@ function ${vpf}tree_link (idx) {
 			tclass = ${vpf}link_class_closed;
 			tstyle = ${vpf}link_style_closed;
 			if(spec_toggle > 0) {
-				tanchor = '<img border="0" src="' + ${vpf}specific_image_base + l[${vpf}IMG_UP] + '">';
+				tanchor = '<img border="0" src="' + ${vpf}specific_image_base + l[${vpf}IMG_UP] + '"$Vend::Xtrailer>';
 // if(alert_shown < 2) {
 // alert('tanchor=' + tanchor);
 // alert_shown = 2;
@@ -1801,7 +1801,7 @@ sub dhtml_browser {
 		$regex = $::Variable->{MV_DHTML_BROWSER}
 			and $regex = qr/$regex/;
 	};
-	$regex ||= qr/MSIE [5-9].*Windows|Mozilla.*Gecko/;
+	$regex ||= qr/MSIE [5-9].*Windows|Mozilla.*Gecko|Opera.*[7-9]/;
 	return $Vend::Session->{browser} =~ $regex;
 }
 
@@ -2165,8 +2165,8 @@ sub menu {
 						href \s*=\s*
 						(["']?) # possible quote
 							([^"'>\s]+)
-						\1      # end quote}isx
-					and $page = $2;
+						\1      # end quote
+					}isx and $page = $2;
 				($page, $form) = split /\?/, $page, 2
 					if $page;
 				s{<a\s+.*?>}{}is;

@@ -1,8 +1,6 @@
 # Vend::Dispatch - Handle Interchange page requests
 #
-# $Id: Dispatch.pm,v 1.103 2008-10-10 15:08:19 mheins Exp $
-#
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 2002 Mike Heins <mike@perusion.net>
 #
 # This program was originally based on Vend 0.2 and 0.3
@@ -26,7 +24,7 @@
 package Vend::Dispatch;
 
 use vars qw($VERSION);
-$VERSION = substr(q$Revision: 1.103 $, 10);
+$VERSION = '1.113';
 
 use POSIX qw(strftime);
 use Vend::Util;
@@ -370,7 +368,10 @@ EOF
 Content-Type: $CGI::values{mv_content_type}
 Content-Length: $size
 EOF
-	::response(	Vend::Util::readfile ($CGI::values{mv_data_file}) );
+	::response(
+        Vend::Util::readfile($CGI::values{mv_data_file}, undef, undef,
+							 {encoding => 'raw'}));
+
 	return 0;
 }
 
@@ -716,7 +717,7 @@ sub run_in_catalog {
 	
 	$g = $Global::Catalog{$cat};
 	unless (defined $g) {
-		logGlobal( "Can't find catalog '%s'" , $cat );
+		logGlobal( "Can't find catalog '%s' for jobs group %s" , $cat, $job );
 		return undef;
 	}
 
@@ -731,16 +732,17 @@ sub run_in_catalog {
 	my $dir;
 	my @itl;
 	if($job) {
-		my ($d, $global_dir, $tmp);
 		my @jobdirs = ([$jobscfg->{base_directory} || 'etc/jobs', 0]);
 
 		if (is_yes($jobscfg->{use_global}) || is_yes($Global::Jobs->{UseGlobal})) {
 			push (@jobdirs, ["$Global::ConfDir/jobs", 1]);
 		}
 
+		my $global_dir;
 		for my $r (@jobdirs) {
-#::logGlobal("check directory=$d for $job");
+			my $d;
 			($d, $global_dir) = @$r;
+#::logGlobal("check directory=$d for $job");
 			next unless $d;
 			next unless -d "$d/$job";
 			$dir = "$d/$job";
@@ -748,9 +750,10 @@ sub run_in_catalog {
 		}
 
 		if($dir) {
+			my $tmp;
 			if ($global_dir) {
-				$tmp = $Vend::Cfg->{AllowedFileRegex};
-				$Vend::Cfg->{AllowedFileRegex} = qr{^$dir};
+				$tmp = $Global::AllowedFileRegex->{$cat};
+				$Global::AllowedFileRegex->{$cat} = qr{^$dir};
 			}
 			
 			my @f = glob("$dir/*");
@@ -763,7 +766,7 @@ sub run_in_catalog {
 			}
 
 			if ($global_dir) {
-				$Vend::Cfg->{AllowedFileRegex} = $tmp;
+				$Global::AllowedFileRegex->{$cat} = $tmp;
 			}
 		}
 	}
@@ -917,19 +920,21 @@ sub adjust_cgi {
 
     $CGI::host = $host || $CGI::ip;
 
-    $CGI::user = $CGI::remote_user if $CGI::remote_user;
-	undef $CGI::authorization if $CGI::remote_user;
+    $CGI::user = $CGI::remote_user, undef $CGI::authorization
+        if $CGI::remote_user;
 
-	unless ($Global::FullUrl) {
-		$CGI::script_name = $CGI::script_path;
-	}
-	else {
-		if($CGI::server_port eq '80') { $CGI::server_port = ''; }
-		else 		{ $CGI::server_port = ":$CGI::server_port"; }
-		$CGI::script_name = $CGI::server_name .
-							$CGI::server_port .
-							$CGI::script_path;
-	}
+    if ($Global::FullUrl) {
+        if ($Global::FullUrlIgnorePort or $CGI::server_port eq '80') {
+            $CGI::server_port = '';
+        }
+        else {
+            $CGI::server_port = ":$CGI::server_port";
+        }
+        $CGI::script_name = $CGI::server_name . $CGI::server_port . $CGI::script_path;
+    }
+    else {
+        $CGI::script_name = $CGI::script_path;
+    }
 }
 
 use vars qw/@NoHistory/;
@@ -1000,7 +1005,7 @@ sub update_global_actions {
 }
 
 sub open_cat {
-	my $cat = shift;
+	my ($cat, $http) = @_;
 
 	if($cat) {
 		%CGI::values = ();
@@ -1152,6 +1157,8 @@ EOF
 	set_file_permissions();
 	umask $Vend::Cfg->{Umask};
 
+	Vend::Server::parse_cgi($http) unless $Global::mod_perl;
+	
 #show_times("end cgi and config mapping") if $Global::ShowTimes;
 	open_database();
 
@@ -1176,13 +1183,15 @@ sub close_cat {
 	put_session() if $Vend::HaveSession;
 	close_session() if $Vend::SessionOpen;
 	close_database();
+	return;
 }
 
 sub run_macro {
 	my $macro = shift
 		or return;
 	my $content_ref = shift;
-
+	my $inspect_sub = shift;
+		
 	my @mac;
 	if(ref $macro eq 'ARRAY') {
 		@mac = @$macro;
@@ -1195,6 +1204,8 @@ sub run_macro {
 	}
 
 	for my $m (@mac) {
+		my $ret;
+		
 		if ($m =~ /^\w+$/) {
 			my $sub = $Vend::Cfg->{Sub}{$m} || $Global::GlobalSub->{$m}
 				or do {
@@ -1209,13 +1220,19 @@ sub run_macro {
 					}
 					next;
 				};
-			$sub->($content_ref);
+			$ret = $sub->($content_ref);
 		}
 		elsif($m =~ /^\w+-\w+$/) {
-			Vend::Interpolate::tag_profile($m);
+			$ret = Vend::Interpolate::tag_profile($m);
 		}
 		else {
-			interpolate_html($m);
+			$ret = interpolate_html($m);
+		}
+
+		if ($inspect_sub) {
+			unless ($inspect_sub->($m, $ret)) {
+				last;
+			}
 		}
 	}
 }
@@ -1227,7 +1244,7 @@ sub dispatch {
 	adjust_cgi();
 
 	## If returns false then was a 404 no catalog or a delivered image
-	open_cat() or return 1;
+	open_cat('', $http) or return 1;
 
 	Vend::Server::set_process_name("$Vend::Cat $CGI::host");
 
@@ -1240,6 +1257,9 @@ sub dispatch {
 
 	$sessionid = $CGI::values{mv_session_id} || undef
 		and $sessionid =~ s/\0.*//s;
+
+	# save for robot check with explicit session id
+	my $sessionid_from_cgi = $sessionid;
 
 	$::Instance->{CookieName} = $Vend::Cfg->{CookieName};
 
@@ -1306,15 +1326,14 @@ sub dispatch {
 	elsif (! $::Instance->{ExternalCookie} and $sessionid !~ /^\w+$/) {
 		my $msg = get_locale_message(
 						403,
-						"Unauthorized for that session %s. Logged.",
-						$sessionid,
+						"Malformed session identifier",
 						);
 		$Vend::StatusLine = <<EOF;
 Status: 403 Unauthorized
 Content-Type: text/plain
 EOF
 		response($msg);
-		logGlobal($msg);
+		logGlobal("$msg: $sessionid");
 		close_cat();
 		return;
 	}
@@ -1441,23 +1460,130 @@ EOF
 
 	$Vend::Session->{'arg'} = $Vend::Argument = ($CGI::values{mv_arg} || undef);
 
-	my $new_source;
-	if ($CGI::values{mv_pc} and $CGI::values{mv_pc} =~ /\D/) {
-		$new_source = $Vend::Session->{source} = $CGI::values{mv_pc} eq 'RESET'
-											   ? ''
-											   : $CGI::values{mv_pc};
-	}
-	elsif($CGI::values{mv_source}) {
-		$new_source = $Vend::Session->{source} = $CGI::values{mv_source};
-	}
-	if ($new_source and $CGI::request_method eq 'GET' and $Vend::Cfg->{BounceReferrals}) {
+	my ($new_source, $already_expired);
+      SOURCEPRIORITY: {
+     if ($CGI::values{mv_pc} and $CGI::values{mv_pc} eq 'RESET') {
+         $Vend::Session->{source} = '';
+ 
+         # Expire cookie, if applicable.
+         if ( length ($Vend::Cfg->{SourceCookie}{name}) ) {
+             my $sc = $Vend::Cfg->{SourceCookie};
+             Vend::Util::set_cookie(
+                $sc->{name},
+                '',
+                1,
+                @{$sc}{qw(domain path secure)}
+            );
+            $already_expired = 1;
+         }
+ 
+         last SOURCEPRIORITY;
+     }
+
+#::logDebug('$Session->{source} before SourcePriority loop: %s', $Vend::Session->{source});
+     foreach (@{$Vend::Cfg->{SourcePriority}}) {
+#::logDebug("Looking at $_");
+         if ($_ eq 'mv_pc') {
+#::logDebug('$CGI::values{mv_pc} is %s', $CGI::values{mv_pc});
+            if ($CGI::values{mv_pc} and $CGI::values{mv_pc} =~ /\D/) {
+                $new_source = $Vend::Session->{source} = $CGI::values{mv_pc};
+                last SOURCEPRIORITY;
+            }
+         }
+
+         elsif (/^cookie-(.+)/) {
+             my $cookie_source = Vend::Util::read_cookie($1);
+#::logDebug("Cookie $1 is $cookie_source");
+             if (length $cookie_source) {
+                 $Vend::Session->{source} = $cookie_source;
+                 last SOURCEPRIORITY;
+            }
+         }
+
+         elsif ($_ eq 'session') {
+#::logDebug('$sessionid is %s', $sessionid);
+            if ($sessionid) {
+                last SOURCEPRIORITY;
+            }
+         }
+
+         elsif (/^session-(.+)/) {
+#::logDebug('$Session->{%s} is %s', $1, $Vend::Session->{$1});
+            if (length $Vend::Session->{$1}) {
+                last SOURCEPRIORITY;
+            }
+         }
+
+         else {
+#::logDebug('$CGI::values{%s} is %s', $_, $CGI::values{$_});
+            if (length $CGI::values{$_}) {
+                $new_source = $Vend::Session->{source} = $CGI::values{$_};
+                last SOURCEPRIORITY;
+            }
+         }
+     }
+    } #SOURCEPRIORITY
+#::logDebug('$Session->{source} after SourcePriority loop: %s', $Vend::Session->{source});
+
+    # Set a cookie if applicable.
+    if (
+        # Obviously must be true
+        length ($Vend::Cfg->{SourceCookie}{name})
+        and
+
+        # and, we didn't already clear it in SOURCEPRIORITY
+        ! $already_expired
+        and
+
+            # any time we have a new source, we want to
+            # reset--even if it's unchanged from the last
+            # value to reset the expiration
+            length ($new_source)
+            ||
+
+            # or, our cookie is different from $Session->{source},
+            # whatever the reason
+            Vend::Util::read_cookie($Vend::Cfg->{SourceCookie}{name})
+                ne
+            $Vend::Session->{source}
+            ||
+
+            # or
+            (
+                # there's something in source worth preserving,
+                length ($Vend::Session->{source})
+                &&
+
+                # and we want the expiration reset with every access,
+                $Vend::Cfg->{SourceCookie}{autoreset}
+            )
+    ) {
+
+        my $sc = $Vend::Cfg->{SourceCookie};
+#::logDebug('Resetting SourceCookie %s to %s', $sc->{name}, $Vend::Session->{source});
+        Vend::Util::set_cookie(
+            $sc->{name},
+            $Vend::Session->{source},
+            @{$sc}{qw(expire domain path secure)}
+        );
+    }
+
+	if (
+		($new_source
+		and $CGI::request_method eq 'GET'
+		and ($Vend::Cfg->{BounceReferrals} or
+             ($Vend::Robot and $Vend::Cfg->{BounceReferralsRobot}))) or
+		($Vend::Robot and $sessionid_from_cgi and $Vend::Cfg->{BounceRobotSessionURL})
+	) {
 		my $path = $CGI::path_info;
 		$path =~ s:^/::;
 		my $form =
 			join '',
 			map { "$_=$CGI::values{$_}\n" }
-			sort keys %$CGI::values;
-		my $url = vendUrl($path, undef, undef, { form => $form, match_security => 1 });
+			grep { !$Vend::Cfg->{BounceReferrals_hide}->{$_} }
+			sort keys %CGI::values;
+		my $url = vendUrl($path eq '' ? $Vend::Cfg->{DirectoryIndex} : $path, undef, undef, { form => $form, match_security => 1 });
+		$url = header_data_scrub($url);
 		my $msg = get_locale_message(
 			301,
 			"Redirected to %s.",
@@ -1523,6 +1649,7 @@ EOF
 	Vend::Interpolate::reset_calc() if $Global::Foreground;
 	Vend::Interpolate::init_calc();
 	new Vend::Tags;
+	new Vend::Parse;	# enable catalog usertags within dispatch routines
 # LEGACY
 	ROUTINES: {
 		last ROUTINES unless index($Vend::FinalPath, "/$Vend::Cfg->{ProcessPage}/") == 0;
@@ -1540,9 +1667,9 @@ EOF
 
 	for my $routine (@{$Vend::Cfg->{DispatchRoutines}}) {
 		$routine->();
+		return if $Vend::Sent;
 	}
-
-#show_times("end dispatch routines (Autoload, etc.)") if $Global::ShowTimes;
+#show_times("end DispatchRoutines") if $Global::ShowTimes;
 
 	for my $macro ( $Vend::Cfg->{Filter}, $Vend::Session->{Filter}) {
 		next unless $macro;
@@ -1595,7 +1722,9 @@ EOF
 #::logDebug("request_uri=$CGI::request_uri script_path=$CGI::script_path");
         if($CGI::request_uri !~ /^$CGI::script_path/) {
             $Vend::FinalPath = $CGI::request_uri;
-#::logDebug("FinalPath now $CGI::request_uri");
+            # remove any trailing query string
+            $Vend::FinalPath =~ s/\?.*//;
+#::logDebug("FinalPath now $Vend::FinalPath");
         }
         else {
             $Vend::FinalPath = find_special_page('catalog');
@@ -1658,7 +1787,6 @@ EOF
 
 #::logDebug("path=$Vend::FinalPath mv_action=$CGI::values{mv_action}");
 
-	if (! $Vend::ResponseMade) {
   DOACTION: {
 	if (defined $CGI::values{mv_action}) {
 		$CGI::values{mv_todo} = $CGI::values{mv_action}
@@ -1670,6 +1798,7 @@ EOF
 	}
 	else {
 		($Vend::Action) = $Vend::FinalPath =~ m{\A([^/]*)};
+		$Vend::Action =~ s/-/_/g; # allow hyphens as synonyms for underscores for SEO prettiness
 	}
 
 #::logGlobal("action=$Vend::Action path=$Vend::FinalPath");
@@ -1718,12 +1847,11 @@ EOF
 
 	do_page() if $status;
 #show_times("end page display") if $Global::ShowTimes;
-		}
-	}
 
 	for my $routine (@{$Vend::Cfg->{CleanupRoutines}}) {
 		$routine->();
 	}
+  }
 
 # TRACK
 	$Vend::Track->filetrack() if $Vend::Track;

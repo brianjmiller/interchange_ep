@@ -1,6 +1,6 @@
 # Vend::Table::Editor - Swiss-army-knife table editor for Interchange
 #
-# $Id: Editor.pm,v 1.92 2008-05-10 14:07:40 mheins Exp $
+# $Id: Editor.pm,v 1.93 2009-03-20 18:59:35 mheins Exp $
 #
 # Copyright (C) 2002-2008 Interchange Development Group
 # Copyright (C) 2002 Mike Heins <mike@perusion.net>
@@ -26,7 +26,7 @@
 package Vend::Table::Editor;
 
 use vars qw($VERSION);
-$VERSION = substr(q$Revision: 1.92 $, 10);
+$VERSION = substr(q$Revision: 1.93 $, 10);
 
 use Vend::Util;
 use Vend::Interpolate;
@@ -829,6 +829,7 @@ sub display {
 								height
 								help
 								help_url
+								id
 								label
 								js_check
 								lookup
@@ -902,7 +903,6 @@ sub display {
 		if ($record->{type} =~ s/^custom\s+//s) {
 			my $wid = lc $record->{type};
 			$wid =~ tr/-/_/;
-			my $w;
 			$record->{attribute} ||= $column;
 			$record->{table}     ||= $mtab;
 			$record->{rows}      ||= $record->{height};
@@ -2914,6 +2914,7 @@ EOF
 						ui_meta_specific
 						ui_hide_key
 						ui_meta_view
+						ui_new_item
 						ui_data_decode
 						mv_blob_field
 						mv_blob_label
@@ -2943,6 +2944,7 @@ EOF
 
 	$Vend::Session->{ui_return_stack} ||= [];
 
+
 	if($opt->{cgi} and ! $pass_return_to) {
 		my $r_ary = $Vend::Session->{ui_return_stack};
 
@@ -2961,8 +2963,18 @@ EOF
 	if(ref $opt->{hidden} or ref $opt->{hidden_all}) {
 		my ($hk, $hv);
 		my @o;
+
 		while ( ($hk, $hv) = each %$hidden ) {
-			push @o, produce_hidden($hk, $hv);
+
+##if new item, get mv_nextpage from radio buttons
+
+			if($opt->{ui_new_item}){
+				next if $hk =~ /mv_nextpage/;
+				push @o, produce_hidden($hk, $hv);
+			}
+			else {
+				push @o, produce_hidden($hk, $hv);
+			}
 		}
 		while ( ($hk, $hv) = each %$hidden_all ) {
 			push @o, produce_hidden($hk, $hv);
@@ -4214,6 +4226,20 @@ EOF
 
 	}
 
+	if($opt->{ui_new_item}) {
+		my $aa_msg = l('Add another item');
+		my $rt_msg = l('Return to table select');
+		chunk 'DO_ANOTHER', 'OUTPUT_MAP', <<EOF;
+<small>
+&nbsp;
+	<input type="radio" class="$opt->{widget_class}" name="mv_nextpage" value="admin/flex_select" CHECKED>
+	$rt_msg
+	<input type="radio" class="$opt->{widget_class}" name="mv_nextpage" value="admin/flex_editor">
+	$aa_msg
+EOF
+
+	}
+
 	chunk_alias 'HIDDEN_FIELDS', qw/
 										HIDDEN_ALWAYS
 										HIDDEN_EXTRA
@@ -4226,6 +4252,7 @@ EOF
 										OK_BOTTOM
 										CANCEL_BOTTOM
 										RESET_BOTTOM
+										DO_ANOTHER
 										/;
 	chunk_alias 'EXTRA_BUTTONS', qw/
 										AUTO_EXPORT

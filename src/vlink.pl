@@ -3,9 +3,9 @@
 # vlink.pl: runs as a cgi program and passes request to Interchange server
 #           via a UNIX socket
 
-# $Id: vlink.pl,v 2.3 2005/07/25 14:03:44 jon Exp $
+# $Id: vlink.pl,v 2.6 2008-11-12 04:15:22 jon Exp $
 #
-# Copyright (C) 2005 Interchange Development Group, http://www.icdevgroup.org/
+# Copyright (C) 2005-2008 Interchange Development Group, http://www.icdevgroup.org/
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program is free software; you can redistribute it and/or
@@ -20,13 +20,13 @@
 #
 # You should have received a copy of the GNU General Public
 # License along with this program; if not, write to the Free
-# Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA  02111-1307  USA.
+# Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+# MA  02110-1301  USA.
 
-require 5.002;
+require 5.008_005;
 use strict;
 use Socket;
-my $LINK_FILE    = '/home/timesheet/live/interchange/var/run/socket';
+my $LINK_FILE    = '~@~INSTALLARCHLIB~@~/etc/socket';
 #my $LINK_FILE    = '~_~LINK_FILE~_~';
 my $LINK_TIMEOUT = 30;
 #my $LINK_TIMEOUT = ~_~LINK_TIMEOUT~_~;

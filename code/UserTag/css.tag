@@ -1,15 +1,13 @@
-# Copyright 2003-2007 Interchange Development Group and others
+# Copyright 2003-2009 Interchange Development Group and others
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.  See the LICENSE file for details.
-# 
-# $Id: css.tag,v 1.8 2007-03-30 23:40:56 pajamian Exp $
 
 UserTag css Order   name
 UserTag css addAttr
-UserTag css Version $Revision: 1.8 $
+UserTag css Version $Revision: 1.9 $
 UserTag css Routine <<EOR
 sub {
 	my ($name, $opt) = @_;
@@ -72,9 +70,7 @@ sub {
 		elsif($opt->{timed}) {
 			my $now = time();
 			$opt->{timed} .= ' min' if $opt->{timed} =~ /^\d+$/;
-			my $secs = Vend::Config::time_to_seconds($opt->{timed});
-#::logDebug("timed seconds = $secs");
-			my $fliptime = $stat[9] + $secs;
+			my $fliptime = adjust_time($opt->{timed}, $stat[9]);
 #::logDebug("fliptime=$fliptime now=$now");
 			if ($fliptime <= $now) {
 				$write = 1;
@@ -97,6 +93,11 @@ sub {
 	$extra .= qq{ media="$opt->{media}"} if $opt->{media};
 
 	my $css;
+	$css = length($opt->{literal})
+				? $opt->{literal}
+				: interpolate_html($Tag->var($name));
+	$css =~ s/^\s*<style.*?>\s*//si;
+	$css =~ s:\s*</style>\s*$:\n:i;
 
 	WRITE: {
 		last WRITE unless $write;
@@ -115,16 +116,11 @@ sub {
 			last WRITE;
 		}
 		my $mode = $opt->{mode} ? oct($opt->{mode}) : 0644;
-		$css = length($opt->{literal})
-					? $opt->{literal}
-					: interpolate_html($Tag->var($name));
-		$css =~ s/^\s*<style.*?>\s*//si;
-		$css =~ s:\s*</style>\s*$:\n:i;
 		$success = $Tag->write_relative_file($fn, $css) && chmod($mode, $fn)
 			or logError("Error writing CSS file %s, returning in page", $fn);
 	}
 
-	return qq{<link rel="stylesheet" href="$url">}  if $success;
+	return qq{<link rel="stylesheet" href="$url"$extra>} if $success;
 	return qq{<style type="text/css">\n$css</style>};
 }
 EOR

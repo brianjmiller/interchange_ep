@@ -1,4 +1,4 @@
-@_UI_STD_INIT_@[calc]
+@_UI_STD_INIT_@[calcn]
 	if ( $CGI->{showactive} ) {
 		delete $Values->{showinactive};
 		$Values->{showactive} = 1;
@@ -21,7 +21,7 @@
 		$Scratch->{active_nm} = 'deactivate';
 	}
 	return;
-[/calc]
+[/calcn]
 
 [value name=mv_data_table set=userdb hide=1]
 [if-mm !tables]
@@ -130,7 +130,7 @@
 	return;
 [/perl]
 
-[calc]
+[calcn]
 	if ($CGI->{mv_like_spec}) {
 		my @f = split /\0/, $CGI->{mv_like_field};
 		my @s = split /\0/, $CGI->{mv_like_spec};
@@ -160,7 +160,7 @@
 								},
 								);
 	return;
-[/calc]
+[/calcn]
 
 [if scratch ui_location]
 [bounce href=`delete $Scratch->{ui_location}`]
@@ -196,13 +196,13 @@
 
 <!-- ----- Show the customer list box ----- -->
 [if cgi ui_text_qualification]
-[calc]
+[calcn]
 	return if $CGI->{mv_like_spec};
 	$Scratch->{page_banner} ||= $Scratch->{page_title};
 	my $val = $Tag->filter('encode_entities', $CGI->{ui_text_qualification});
 	$Scratch->{page_banner} .= ' -- ' . errmsg( 'entries containing "%s"', $val);
 	return;
-[/calc]
+[/calcn]
 [/if]
 <FORM ACTION="[process]">
 [form-session-id]
@@ -235,7 +235,7 @@
 		[scratch start_at][set start_at][/set]
 		rf=username,company,lname,fname,city,state,country
 "]
-[calc] 
+[calcn]
 	my $so   = $CGI->{ui_sort_option};
 	my $fld  = $CGI->{ui_sort_field};
 	$fld =~ s/[\s,\0].*//;
@@ -248,7 +248,7 @@
 		return $out . 'r';
 	}
 	return;
-[/calc]
+[/calcn]
 <br>
 <table width="100%" border=0 cellpadding=0 cellspacing=1 class=rseparator>
 <tr class=rhead>
@@ -277,7 +277,18 @@
 [search-list]
 <TR [item-alternate 2]class=rownorm[else]class=rowalt[/else][/item-alternate]>
 
-	<TD><INPUT TYPE=checkbox NAME=customer VALUE="[item-code]">
+	<TD><INPUT TYPE=checkbox NAME=customer VALUE="[item-code]"
+[item-calc]
+  my $string = '';
+  if(! $Scratch->{old_browser}) {
+    my $nm = 'checker[item-increment]';
+    push @els, qq{push_el('$nm', '');};
+    $string .= "id=$nm ";
+  }
+  return $string;
+[/item-calc]
+>
+
 [page href="@@MV_PAGE@@"
 	extra="title=[scratch active_nm]"
 	form="
@@ -377,6 +388,71 @@ so there's a full line across the page even if table cells are blank.
 [/if-mm]
 
 [/search-region]
+
+[output name=""]
+
+[if !scratch old_browser]
+<script>
+	var stat_array = new Array;
+	function push_el (el, status) {
+		if(stat_array[status] == undefined) {
+			stat_array[status] = new Array;
+		}
+		var els = stat_array[status];
+		els[els.length] = el;
+	}
+
+	function checkType (type, cond) {
+		var other = false;
+		if(cond == undefined) 
+			cond = true;
+		if(cond != true) 
+			other = true;
+		if(stat_array == undefined) {
+			return;
+		}
+		var i;
+		var alerted;
+		for(i in stat_array) {
+			var els = stat_array[i];
+			for (var j = 0; j < els.length; j++) {
+				var el = document.getElementById(els[j]);
+				if(el != undefined) {
+					if( type == 'none' ) {
+						el.checked = false;
+					}
+					else {
+						if( type == 'all' ) {
+							el.checked = true;
+						}
+						else {
+							if(i == type)
+								el.checked = cond;
+							else
+								el.checked = other;
+						}
+					}
+				}
+			}
+			var image_dir = '[image dir-only=1 ui=1 secure="__UI_SECURE__"]';
+			var types = ['all', 'none'];
+			for(var i = 0; i < types.length; i++) {
+				var img = document.getElementById('img_check_' + types[i]);
+				if(img != undefined) 
+					img.src= image_dir + 'box_empty.gif';
+			}
+			var img = document.getElementById('img_check_' + type);
+			img.src= image_dir + 'box_checked.gif';
+		}
+	}
+	[calcn]
+		return join "\n", @els, '';
+	[/calcn]
+</script>
+			<A HREF="javascript:checkType('all')"><img id="img_check_all" src="__UI_IMG__box_empty.gif" border=0>[L]Check all[/L]</A>
+			&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+			<A HREF="javascript:checkType('none')"><img id="img_check_none" src="__UI_IMG__box_empty.gif" border=0>[L]Uncheck all[/L]</A>
+[/if]
 
 [output name=bottom_of_form]
 </FORM>

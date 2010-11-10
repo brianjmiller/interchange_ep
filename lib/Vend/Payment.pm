@@ -1,8 +1,8 @@
 # Vend::Payment - Interchange payment processing routines
 #
-# $Id: Payment.pm,v 2.20 2008-07-16 00:37:32 mheins Exp $
+# $Id: Payment.pm,v 2.23 2009-03-20 22:15:56 markj Exp $
 #
-# Copyright (C) 2002-2007 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 package Vend::Payment;
 require Exporter;
 
-$VERSION = substr(q$Revision: 2.20 $, 10);
+$VERSION = substr(q$Revision: 2.23 $, 10);
 
 @ISA = qw(Exporter);
 
@@ -34,14 +34,14 @@ $VERSION = substr(q$Revision: 2.20 $, 10);
 
 @EXPORT_OK = qw(
 				map_actual
-				);
+		);
 
 use Vend::Util;
 use Vend::Interpolate;
 use Vend::Order;
+use IO::Pipe;
 use strict;
 
-use vars qw/%order_id_check/;
 use vars qw/$Have_LWP $Have_Net_SSLeay/;
 
 my $pay_opt;
@@ -166,7 +166,7 @@ sub map_actual {
 	);
 
 	my %map = qw(
-		cyber_mode                  mv_cyber_mode
+		cyber_mode               mv_cyber_mode
 		comment                  giftnote
 	);
 	@map{@map} = @map;
@@ -268,16 +268,6 @@ sub map_actual {
 	return %actual;
 }
 
-%order_id_check = (
-	cybercash => sub {
-					my $val = shift;
-					# The following characters are illegal in a CyberCash order ID:
-					#    : < > = + @ " % = &
-					$val =~ tr/:<>=+\@\"\%\&/_/d;
-					return $val;
-				},
-);
-
 sub gen_order_id {
 	my $opt = shift || {};
 	if( $opt->{order_id}) {
@@ -296,10 +286,6 @@ sub gen_order_id {
 		my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = @t;
 		$opt->{order_id} = POSIX::strftime("%y%m%d%H%M%S$$", @t);
 
-	}
-
-	if (my $check = $order_id_check{$opt->{gateway}}) {
-		$opt->{order_id} = $check->($opt->{order_id});
 	}
 
 	return $opt->{order_id};
@@ -342,7 +328,7 @@ sub charge {
 	my $orderID = gen_order_id($pay_opt);
 
 	### Set up the amounts. The {amount} key will have the currency prepended,
-	### ala CyberCash (i.e. "usd 19.95"). {total_cost} has just the cost.
+	### e.g. "usd 19.95". {total_cost} has just the cost.
 
 	# Uses the {currency} -> MV_PAYMENT_CURRENCY options if set
 	my $currency =  charge_param('currency')
@@ -404,15 +390,52 @@ sub charge {
 #::logDebug("Charge sub");
 		# Calling a defined GlobalSub payment mode
 		# Arguments are the passed option hash (if any) and the route hash
-		eval {
-			%result = $sub->($pay_opt);
-		};
+
+        my $pid;
+        my $timeout = $pay_opt->{global_timeout} || charge_param('global_timeout');
+
+        %result = eval {
+            if ($timeout > 0) {
+
+                my $pipe = IO::Pipe->new;
+
+                unless ($pid = fork) {
+                    Vend::Server::child_process_dbi_prep();
+                    $pipe->writer;
+                    my %rv = $sub->($pay_opt);
+                    $pipe->print( ::uneval(\%rv) );
+                    exit;
+                }
+
+                $pipe->reader;
+
+                my $to_msg = $pay_opt->{global_timeout_msg}
+                    || charge_param('global_timeout_msg')
+                    || 'Due to technical difficulties, your order could not be processed.';
+                local $SIG{ALRM} = sub { die "$to_msg\n" };
+
+                alarm $timeout;
+                wait;
+                alarm 0;
+
+                $pid = undef;
+
+                my $rv = eval join ('', $pipe->getlines);
+
+                return %$rv;
+            }
+
+            return $sub->($pay_opt);
+        };
+
 		if($@) {
 			my $msg = errmsg(
 						"payment routine '%s' returned error: %s",
 						$charge_type,
 						$@,
 			);
+            kill (KILL => $pid)
+                if $pid && kill (0 => $pid);
 			::logError($msg);
 			$result{MStatus} = 'died';
 			$result{MErrMsg} = $msg;
@@ -468,18 +491,6 @@ sub charge {
 			'Card-Exp'     => $actual{mv_credit_card_exp_all}, 
 		);
 		$result{MStatus} = $status if defined $status;
-	}
-	elsif ($Vend::CC3) {
-#::logDebug("Charge legacy cybercash");
-		### Deprecated
-		eval {
-			%result = cybercash($pay_opt);
-		};
-		if($@) {
-			my $msg = errmsg( "CyberCash died: %s", $@ );
-			::logError($msg);
-			$result{MStatus} = $msg;
-		}
 	}
 	else {
 #::logDebug("Unknown charge type");

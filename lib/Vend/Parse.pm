@@ -26,7 +26,7 @@
 package Vend::Parse;
 require Vend::Parser;
 
-use Safe;
+use Vend::Safe;
 use Vend::Util;
 use Vend::Interpolate;
 use Text::ParseWords;
@@ -482,7 +482,7 @@ sub resolve_args {
 	}
 	@list = @{$ref}{@{$Order{$tag}}};
 	push @list, $ref if defined $addAttr{$tag};
-	push @list, (shift || $ref->{body} || '') if $hasEndTag{$tag};
+	push @list, (shift || (defined $ref->{body} ? $ref->{body} : '')) if $hasEndTag{$tag};
 	return @list;
 }
 
@@ -678,7 +678,7 @@ sub start {
 		}
 		# Parse tags within tags, only works if the [ is the
 		# first character.
-		next unless $attr->{$trib} =~ /\[\w+[-\w]*\s*[\000-\377]*\]/;
+		next unless $attr->{$trib} =~ /\[\w+[-\w]*\s*(?s:.)*\]/;
 
 		my $p = new Vend::Parse;
 		$p->parse($attr->{$trib});
@@ -751,6 +751,9 @@ sub start {
 			if(! $attr->{href} and $attr->{page}) {
 				$attr->{href} = Vend::Interpolate::tag_area($attr->{page});
 			}
+
+			$attr->{href} = header_data_scrub($attr->{href});
+
 			$Vend::StatusLine = '' if ! $Vend::StatusLine;
 			$Vend::StatusLine .= "\n" if $Vend::StatusLine !~ /\n$/;
 			$Vend::StatusLine .= <<EOF if $attr->{target};

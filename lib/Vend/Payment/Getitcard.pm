@@ -1,9 +1,9 @@
 # Vend::Payment::Getitcard - Interchange Getitcard support
 #
-# $Id: Getitcard.pm,v 1.1 2008-04-17 15:48:12 racke Exp $
+# $Id: Getitcard.pm,v 1.2 2009-03-16 19:34:01 jon Exp $
 #
-# Copyright (C) 2007,2008 Interchange Development Group
-# Copyright (C) 2007,2008 Stefan Hornburg (Racke) <racke@linuxia.de>
+# Copyright (C) 2007,2008,2009 Interchange Development Group
+# Copyright (C) 2007,2008,2009 Stefan Hornburg (Racke) <racke@linuxia.de>
 # Copyright (C) 2007,2008 Jure Kodzoman (Yure) <jure@tenalt.com>
 #
 # This program is free software; you can redistribute it and/or modify
@@ -48,9 +48,7 @@ by Getitcard (http://www.getitcard.com/).
 
 The Vend::Payment::Getitcard module implements the getitcard() routine
 for use with Interchange. It is compatible on a call level with the other
-Interchange payment modules -- in theory (and even usually in practice) you
-could switch from CyberCash to Getitcard with a few configuration 
-file changes.
+Interchange payment modules.
 
 To enable this module, place this directive in C<interchange.cfg>:
 
@@ -372,10 +370,6 @@ sub getitcard {
 
 	# This converts the amount to fit getitcard (ie 32.64 to 3264)
 	$amount = sprintf("%d", $amount*100);
-
-	$shipping = Vend::Interpolate::tag_shipping();
-	$subtotal = Vend::Interpolate::subtotal();
-	$salestax = Vend::Interpolate::salestax();
 
 	# if we didn't get it with charge, get it from IC
 	if (! $order_number){

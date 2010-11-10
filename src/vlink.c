@@ -2,9 +2,10 @@
  * vlink.c: runs as a CGI program and passes request to Interchange
  *          server via UNIX socket
  *
- * $Id: vlink.c,v 2.4 2005/07/25 14:03:44 jon Exp $
+ * $Id: vlink.c,v 2.8 2008-12-31 01:26:00 mheins Exp $
  *
- * Copyright (C) 2005 Interchange Development Group, http://www.icdevgroup.org/
+ * Copyright (C) 2005-2007 Interchange Development Group,
+ * http://www.icdevgroup.org/
  * Copyright (C) 1996-2002 Red Hat, Inc.
  * Copyright (C) 1995 by Andrew M. Wilcox <amw@wilcoxsolutions.com>
  *
@@ -20,8 +21,8 @@
  *
  * You should have received a copy of the GNU General Public
  * License along with this program; if not, write to the Free
- * Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
- * MA  02111-1307  USA.
+ * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+ * MA  02110-1301  USA.
  */
 
 #include "config.h"
@@ -59,11 +60,11 @@ extern char** environ;
  */
 void server_not_running()
 {
-  printf("Content-type: text/html\r\n\r\n");
-  printf("<HTML><HEAD><TITLE>No response</TITLE></HEAD><BODY BGCOLOR=\"#FFFFFF\">");
-  printf("<H3>We're sorry, the Interchange server is unavailable...</H3>\r\n");
-  printf("We are out of service or may be experiencing high system\r\n");
-  printf("demand. Please try again soon.</BODY></HTML>\r\n");
+  printf("%s", LINK_MESSAGE_HEAD);
+  printf("%s", LINK_MESSAGE_LINE1);
+  printf("%s", LINK_MESSAGE_LINE2);
+  printf("%s", LINK_MESSAGE_LINE3);
+  printf("%s", LINK_MESSAGE_LINE4);
   exit(1);
 }
 

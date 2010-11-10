@@ -3,9 +3,9 @@
 # tlink.pl: runs as a cgi program and passes request to Interchange server
 #           via a TCP socket
 #
-# $Id: tlink.pl,v 2.3 2005/07/25 14:03:44 jon Exp $
+# $Id: tlink.pl,v 2.6 2008-11-12 04:15:22 jon Exp $
 #
-# Copyright (C) 2005 Interchange Development Group, http://www.icdevgroup.org/
+# Copyright (C) 2005-2008 Interchange Development Group, http://www.icdevgroup.org/
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program is free software; you can redistribute it and/or
@@ -20,17 +20,17 @@
 #
 # You should have received a copy of the GNU General Public
 # License along with this program; if not, write to the Free
-# Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA  02111-1307  USA.
+# Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+# MA  02110-1301  USA.
 
-require 5.002;
+require 5.008_005;
 use strict;
 use Socket;
 my $LINK_TIMEOUT = 30;
 #my $LINK_TIMEOUT = ~_~LINK_TIMEOUT~_~;
 my $LINK_PORT    = $ENV{MINIVEND_PORT} || 7786;
 #my $LINK_PORT    = $ENV{MINIVEND_PORT} || ~_~LINK_PORT~_~;
-my $LINK_HOST    = '127.0.0.1';
+my $LINK_HOST    = 'localhost';
 #my $LINK_HOST    = '~_~LINK_HOST~_~';
 my $ERROR_ACTION = "-notify";
 

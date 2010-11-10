@@ -1,6 +1,6 @@
 # Vend::UserDB - Interchange user database functions
 #
-# $Id: UserDB.pm,v 2.63 2008-06-24 16:20:00 mheins Exp $
+# $Id: UserDB.pm,v 2.66 2009-05-01 13:50:01 pajamian Exp $
 #
 # Copyright (C) 2002-2008 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
@@ -17,7 +17,7 @@
 
 package Vend::UserDB;
 
-$VERSION = substr(q$Revision: 2.63 $, 10);
+$VERSION = substr(q$Revision: 2.66 $, 10);
 
 use vars qw!
 	$VERSION
@@ -28,11 +28,52 @@ use vars qw!
 
 use Vend::Data;
 use Vend::Util;
-use Safe;
+use Vend::Safe;
 use strict;
 no warnings qw(uninitialized numeric);
 
-my $ready = new Safe;
+my $ready = new Vend::Safe;
+
+my $HAVE_SHA1;
+
+eval {
+    require Digest::SHA1;
+    import Digest::SHA1;
+    $HAVE_SHA1 = 1;
+};
+
+if ($@) {
+    ::logGlobal("SHA1 passwords disabled: $@");
+}
+
+my %enc_subs = (
+    default => sub {
+        my $obj = shift;
+        my ($pwd, $salt) = @_;
+        return crypt($pwd, $salt);
+    },
+    md5 => sub {
+        my $obj = shift;
+        return Digest::MD5::md5_hex(shift);
+    },
+    sha1 => sub {
+        my $obj = shift;
+        unless ($HAVE_SHA1) {
+            $obj->log_either('SHA1 passwords unavailable. Is Digest::SHA1 installed?');
+            return;
+        }
+        return Digest::SHA1::sha1_hex(shift);
+    },
+);
+
+# Maps the length of the encrypted data to the algorithm that
+# produces it. This method will have to be re-evaluated if competing
+# algorithms are introduced which produce the same-length value.
+my %enc_id = qw/
+    13  default
+    32  md5
+    40  sha1
+/;
 
 =head1 NAME
 
@@ -90,10 +131,10 @@ Save, restore filed user information:
 
     $obj->get_shipping();
     $obj->set_shipping();
- 
+
     $obj->get_billing();
     $obj->set_billing();
- 
+
     $obj->get_preferences();
     $obj->set_preferences();
 
@@ -126,6 +167,7 @@ box or in a set of links.
 @S_FIELDS = ( 
 qw!
 	s_nickname
+	company
 	name
 	fname
 	lname
@@ -196,6 +238,90 @@ Preferences are miscellaneous session information. They include
 by default the fields C<email>, C<fax>, C<phone_night>,
 and C<fax_order>. The field C<p_nickname> acts as a key to select
 the preference set.
+
+=head2 Locations
+
+There are several database locations that have special purposes. These
+fields are not saved as user values.
+
+=over
+
+=item USERNAME				default: username
+
+The username or key field of the database table.
+
+=item BILLING				default: accounts
+
+Billing address hash field.
+
+=item SHIPPING				default: address_book
+
+Shipping address hash field.
+
+=item PREFERENCES			default: preferences
+
+Miscellaneous information hash field.
+
+=item FEEDBACK				default: feedback
+
+Customer feedback hash field.
+
+=item PRICING				default: price_level
+
+Customer pricing level marker.
+
+=item CARTS					default: carts
+
+Saved carts hash field.
+
+=item PASSWORD				default: password
+
+Customer password info. If C<crypt> is set, may be encrypted.
+
+=item LAST					default: mod_time
+
+Last login time
+
+=item EXPIRATION			default: expiration
+
+Expiration of account.
+
+=item OUTBOARD_KEY  		default: (none)
+
+Key information for linking to another table of address or other info.
+
+=item GROUPS				default: groups
+
+Groups they should be logged into.
+
+=item SUPER					default: super
+
+Whether they are a superuser (admin).
+
+=item ACL					default: acl
+
+=item FILE_ACL				default: file_acl
+
+=item DB_ACL				default: db_acl
+
+Location of access control information.
+
+=item CREATED_DATE_ISO		default: (none)
+
+=item CREATED_DATE_UNIX		default: (none)
+
+=item UPDATED_DATE_ISO		default: (none)
+
+=item UPDATED_DATE_UNIX		default: (none)
+
+Date fields.
+
+=item MERGED_USER			default: (none)
+
+The user id of another account this was merged into. If present, and data (should
+be a valid user id) is present in the field, the user will be logged as that username.
+
+=back
 
 =cut
 
@@ -295,6 +421,7 @@ sub new {
 						EXPIRATION	=> $options{expire_field} || 'expiration',
 						OUTBOARD_KEY=> $options{outboard_key_col},
 						GROUPS		=> $options{groups_field}|| 'groups',
+						MERGED_USER => $options{merged_user},
 						SUPER		=> $options{super_field}|| 'super',
 						ACL			=> $options{acl}		|| 'acl',
 						FILE_ACL	=> $options{file_acl}	|| 'file_acl',
@@ -478,9 +605,7 @@ sub _set_acl {
 	my ($self, $loc, %options) = @_;
 	return undef unless $self->{OPTIONS}{location};
 	if($options{mode} =~ /^\s*expires?\s+(.*)/i) {
-		my $secs = Vend::Config::time_to_seconds($1);
-		my $now = time();
-		$options{mode} = $secs + $now;
+		$options{mode} = adjust_time($1);
 	}
 	my $acl = $self->{DB}->field( $self->{USERNAME}, $loc );
 	my $f = $ready->reval($acl) || {};
@@ -1256,37 +1381,6 @@ sub login {
 			die $stock_error, "\n";
 		}
 
-		# Allow entry to global AdminUser without checking access database
-		ADMINUSER: {
-			if ($Global::AdminUser) {
-				my $pwinfo = $Global::AdminUser;
-				$pwinfo =~ s/^\s+//; $pwinfo =~ s/\s+$//;
-				my ($adminuser, $adminpass) = split /[\s:]+/, $pwinfo;
-				last ADMINUSER unless $adminuser eq $self->{USERNAME};
-				unless ($adminpass) {
-					$self->log_either(errmsg("Refusing to use AdminUser variable with user '%s' and empty password", $adminuser));
-					last ADMINUSER;
-				}
-				my $test;
-				if($Global::Variable->{MV_NO_CRYPT}) {
-					 $test = $self->{PASSWORD}
-				}
-				elsif ($self->{OPTIONS}{md5}) {
-					 $test = generate_key($self->{PASSWORD});
-				}
-				else {
-					 $test = crypt($self->{PASSWORD}, $adminpass);
-				}
-				if ($test eq $adminpass) {
-					$user_data = {};
-					$Vend::admin = $Vend::superuser = 1;
-					$self->log_either( errmsg("Successful superuser login by AdminUser '%s'", $adminuser));
-				} else {
-					$self->log_either(errmsg("Password given with user name '%s' didn't match AdminUser password", $adminuser));
-				}
-			}
-		}
-
 		my $udb = $self->{DB};
 		my $foreign = $self->{OPTIONS}{indirect_login};
 
@@ -1332,13 +1426,51 @@ sub login {
 				die $stock_error, "\n";
 			}
 			$pw = $self->{PASSWORD};
-			if($self->{CRYPT}) {
-				if($self->{OPTIONS}{md5}) {
-					$self->{PASSWORD} = generate_key($pw);
+
+			if ( $self->{CRYPT} && $self->{OPTIONS}{promote} ) {
+				my ($cur_method) = grep { $self->{OPTIONS}{ $_ } } keys %enc_subs;
+				$cur_method ||= 'default';
+
+				my $stored_by = $enc_id{ length($db_pass) };
+
+				if (
+					$cur_method ne $stored_by
+					&&
+					$db_pass eq $enc_subs{$stored_by}->($self, $pw, $db_pass)
+				) {
+
+					my $newpass = $enc_subs{$cur_method}->($self, $pw, $db_pass);
+					my $db_newpass = eval {
+						$self->{DB}->set_field(
+							$self->{USERNAME},
+							$self->{LOCATION}{PASSWORD},
+							$newpass,
+						);
+					};
+
+					if ($db_newpass ne $newpass) {
+						# Usually, an error in the update will cause $db_newpass to be set to a
+						# useful error string. The usefulness is dependent on DB store itself, though.
+						my $err_msg = qq{Could not update database "%s" field "%s" with promoted password due to error:\n}
+							. "%s\n"
+							. qq{Check that field "%s" is at least %s characters wide.\n};
+						$err_msg = ::errmsg(
+							$err_msg,
+							$self->{DB_ID},
+							$self->{LOCATION}{PASSWORD},
+							$DBI::errstr,
+							$self->{LOCATION}{PASSWORD},
+							length($newpass),
+						);
+						::logError($err_msg);
+						die $err_msg;
+					} 
+					$db_pass = $newpass;
 				}
-				else {
-					$self->{PASSWORD} = crypt($pw, $db_pass);
-				}
+			}
+
+			if ($self->{CRYPT}) {
+				$self->{PASSWORD} = $self->do_crypt($pw, $db_pass);
 			}
 			unless ($self->{PASSWORD} eq $db_pass) {
 				$self->log_either(errmsg("Denied attempted login by user '%s' with incorrect password",
@@ -1364,6 +1496,20 @@ sub login {
 			}
 		}
 
+		if($self->{PRESENT}->{ $self->{LOCATION}{MERGED_USER} } ) {
+			my $old = $self->{USERNAME};
+			my $new = $udb->field(
+						$self->{USERNAME},
+						$self->{LOCATION}{MERGED_USER},
+						);
+			if($new) {
+				$self->{USERNAME} = $new;
+				my $msg = errmsg('%s logged in as user %s, merged.', $old, $new);
+				Vend::Tags->warnings($msg);
+				$self->log_either($msg);
+			}
+		}
+
 		if($self->{PRESENT}->{ $self->{LOCATION}{GROUPS} } ) {
 			$Vend::groups
 			= $Vend::Session->{groups}
@@ -1373,7 +1519,7 @@ sub login {
 						);
 		}
 
-		username_cookies($self->{USERNAME}, $pw) 
+		username_cookies($self->{PASSED_USERNAME} || $self->{USERNAME}, $pw) 
 			if $Vend::Cfg->{CookieLogin};
 
 		if ($self->{LOCATION}{LAST} ne 'none') {
@@ -1543,13 +1689,8 @@ sub change_pass {
 
 		unless ($super and $self->{USERNAME} ne $Vend::username) {
 			my $db_pass = $self->{DB}->field($self->{USERNAME}, $self->{LOCATION}{PASSWORD});
-			if($self->{CRYPT}) {
-				if($self->{OPTIONS}{md5}) {
-					$self->{OLDPASS} = generate_key($self->{OLDPASS});
-				}
-				else {
-					$self->{OLDPASS} = crypt($self->{OLDPASS}, $db_pass);
-				}
+			if ($self->{CRYPT}) {
+				$self->{OLDPASS} = $self->do_crypt($self->{OLDPASS}, $db_pass);
 			}
 			die errmsg("Must have old password.") . "\n"
 				if $self->{OLDPASS} ne $db_pass;
@@ -1561,16 +1702,11 @@ sub change_pass {
 		die errmsg("Password and check value don't match.") . "\n"
 			unless $self->{PASSWORD} eq $self->{VERIFY};
 
-		if($self->{CRYPT}) {
-				if($self->{OPTIONS}{md5}) {
-					$self->{PASSWORD} = generate_key($self->{PASSWORD});
-				}
-				else {
-					$self->{PASSWORD} = crypt(
-											$self->{PASSWORD},
-											Vend::Util::random_string(2)
-										);
-				}
+		if ( $self->{CRYPT} ) {
+			$self->{PASSWORD} = $self->do_crypt(
+				$self->{PASSWORD},
+				Vend::Util::random_string(2),
+			);
 		}
 		
 		my $pass = $self->{DB}->set_field(
@@ -1678,12 +1814,7 @@ sub new_account {
 		my $pw = $self->{PASSWORD};
 		if($self->{CRYPT}) {
 			eval {
-				if($self->{OPTIONS}{md5}) {
-					$pw = generate_key($pw);
-				}
-				else {
-					$pw = crypt( $pw, Vend::Util::random_string(2));
-				}
+				$pw = $self->do_crypt($pw, Vend::Util::random_string(2));
 			};
 		}
 	
@@ -1695,8 +1826,9 @@ sub new_account {
 			$self->{USERNAME} = lc $self->{USERNAME}
 				if $self->{OPTIONS}{ignore_case};
 		}
-		die errmsg("Can't have '%s' as username; it contains illegal characters.",
-			$self->{USERNAME}) . "\n"
+		# plain error message without user-supplied username
+		# to avoid XSS exploit (RT #306)
+		die errmsg("Username contains illegal characters.\n")
 			if $self->{USERNAME} !~ m{^$self->{VALIDCHARS}+$};
 		die errmsg("Must have at least %s characters in username.",
 			$self->{USERMINLEN}) . "\n"
@@ -2082,6 +2214,19 @@ sub userdb {
 	}
 	return $status unless $options{hide};
 	return;
+}
+
+sub do_crypt {
+	my ($self, $password, $salt) = @_;
+	my $sub = $self->{ENCSUB};
+	unless ($sub) {
+		for (grep { $self->{OPTIONS}{$_} } keys %enc_subs) {
+			$sub = $enc_subs{$_};
+			last;
+		}
+		$self->{ENCSUB} = $sub ||= $enc_subs{default};
+	}
+	return $sub->($self, $password, $salt);
 }
 
 1;

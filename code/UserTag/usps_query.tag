@@ -1,15 +1,13 @@
-# Copyright 2002-2007 Interchange Development Group and others
+# Copyright 2002-2009 Interchange Development Group and others
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.  See the LICENSE file for details.
-# 
-# $Id: usps_query.tag,v 1.7 2007-03-30 23:40:57 pajamian Exp $
 
 UserTag  usps-query  Order   service weight
 UserTag  usps-query  addAttr
-UserTag  usps-query  Version $Revision: 1.7 $
+UserTag  usps-query  Version 1.10
 UserTag  usps-query  Routine <<EOR
 
 sub {
@@ -23,18 +21,19 @@ sub {
 			      'BPM'         => 1,
 			      'LIBRARY'     => 1,
 			      'MEDIA'       => 1,
-			      'GLOBAL EXPRESS GUARANTEED DOCUMENT SERVICE'     => 1,
-			      'GLOBAL EXPRESS GUARANTEED NON-DOCUMENT SERVICE' => 1,
-			      'GLOBAL EXPRESS MAIL (EMS)'                      => 1,
-			      'GLOBAL PRIORITY MAIL - FLAT-RATE ENVELOPE (LARGE)' => 1,
-			      'GLOBAL PRIORITY MAIL - FLAT-RATE ENVELOPE (SMALL)' => 1,
-			      'GLOBAL PRIORITY MAIL - VARIABLE WEIGHT (SINGLE)' => 1,
-			      'AIRMAIL LETTER-POST'                            => 1,
-			      'AIRMAIL PARCEL POST'                            => 1,
-			      'ECONOMY (SURFACE) LETTER-POST'                  => 1,
-			      'ECONOMY (SURFACE) PARCEL POST'                  => 1,
-			      'POSTCARDS - AIRMAIL'                            => 1,
-			      'AEROGRAMMES - AIRMAIL'                          => 1,
+			      'GLOBAL EXPRESS GUARANTEED'                              => 1,
+			      'GLOBAL EXPRESS GUARANTEED NON-DOCUMENT RECTANGULAR'     => 1,
+			      'GLOBAL EXPRESS GUARANTEED NON-DOCUMENT NON-RECTANGULAR' => 1,
+			      'USPS GXG ENVELOPES'                                     => 1,
+			      'EXPRESS MAIL INTERNATIONAL (EMS)'                       => 1,
+			      'EXPRESS MAIL INTERNATIONAL (EMS) FLAT-RATE ENVELOPE'    => 1,
+			      'PRIORITY MAIL INTERNATIONAL'                            => 1,
+			      'PRIORITY MAIL INTERNATIONAL FLAT-RATE ENVELOPE'         => 1,
+			      'PRIORITY MAIL INTERNATIONAL REGULAR FLAT-RATE BOXES'    => 1,
+			      'PRIORITY MAIL INTERNATIONAL LARGE FLAT-RATE BOX'        => 1,
+			      'PRIORITY MAIL INTERNATIONAL SMALL FLAT-RATE BOX'        => 1,
+			      'FIRST CLASS MAIL INTERNATIONAL LARGE ENVELOPE'          => 1,
+			      'FIRST CLASS MAIL INTERNATIONAL PACKAGE'                 => 1,
 			      'MATTER FOR THE BLIND - ECONOMY MAIL'            => 1,
 			      );
     my %package_sizes = (
@@ -97,13 +96,44 @@ RATEQUOTE: {
     $weight = int $weight;
     
     if ($opt->{country}) {
+        my %map = (
+            q{United Kingdom} => q{Great Britain},
+            q{Virgin Islands, British} => q{British Virgin Islands},
+            q{Viet Nam} => q{Vietnam},
+            q{Tanzania, United Republic Of} => q{Tanzania},
+            q{Slovakia} => q{Slovak Republic},
+            q{Serbia} => q{Serbia-Montenegro},
+            q{Montenegro} => q{Serbia-Montenegro},
+            q{Samoa} => q{Western Samoa},
+            q{Saint Kitts And Nevis} => q{St. Christopher and Nevis},
+            q{Russian Federation} => q{Russia},
+            q{Pitcairn} => q{Pitcairn Island},
+            q{Moldova, Republic Of} => q{Moldova},
+            q{Marshall Islands} => q{Republic of the Marshall Islands},
+            q{Macedonia, The Former Yugoslav R} => q{Macedonia, Republic of},
+            q{Libyan Arab Jamahiriya} => q{Libya},
+            q{Lao People's Democratic Republic} => q{Laos},
+            q{Korea, Republic of} => q{South Korea},
+            q{Iran, Islamic Republic Of} => q{Iran},
+            q{Holy See (Vatican City State)} => q{Vatican City},
+            q{Georgia} => q{Georgia, Republic of},
+            q{Falkland Islands (Malvinas)} => q{Falkland Islands},
+            q{Cote d'Ivoire (Ivory Coast)} => q{Cote d'Ivoire},
+            q{Congo, The Democratic Republic O} => q{Democratic Republic of the Congo},
+            q{Congo} => q{Congo, Republic of the},
+            q{Bosnia And Herzegowina} => q{Bosnia-Herzegovina},
+        );
+
+        my $usps_country = $map{ $opt->{country} }
+            || $opt->{country};
+
 	$xml = qq{API=IntlRate\&XML=<IntlRateRequest USERID="$userid" PASSWORD="$passwd">};
 	$xml .= <<EOXML;
 	<Package ID="0">
 	    <Pounds>$weight</Pounds>
 	    <Ounces>$ounces</Ounces>
 	    <MailType>$mailtype</MailType>
-	    <Country>$opt->{country}</Country>
+	    <Country>$usps_country</Country>
 	</Package>
 	</IntlRateRequest>
 EOXML
@@ -231,18 +261,19 @@ The USPS service you wish to get a rate quote for. Services currently supported:
     BPM
     LIBRARY
     MEDIA
-    GLOBAL EXPRESS GUARANTEED DOCUMENT SERVICE
-    GLOBAL EXPRESS GUARANTEED NON-DOCUMENT SERVICE
-    GLOBAL EXPRESS MAIL (EMS)
-    GLOBAL PRIORITY MAIL - FLAT-RATE ENVELOPE (LARGE)
-    GLOBAL PRIORITY MAIL - FLAT-RATE ENVELOPE (SMALL)
-    GLOBAL PRIORITY MAIL - VARIABLE WEIGHT (SINGLE)
-    AIRMAIL LETTER-POST
-    AIRMAIL PARCEL POST
-    ECONOMY (SURFACE) LETTER-POST
-    ECONOMY (SURFACE) PARCEL POST
-    POSTCARDS - AIRMAIL
-    AEROGRAMMES - AIRMAIL
+    GLOBAL EXPRESS GUARANTEED
+    GLOBAL EXPRESS GUARANTEED NON-DOCUMENT RECTANGULAR
+    GLOBAL EXPRESS GUARANTEED NON-DOCUMENT NON-RECTANGULAR
+    USPS GXG ENVELOPES
+    EXPRESS MAIL INTERNATIONAL (EMS)
+    EXPRESS MAIL INTERNATIONAL (EMS) FLAT-RATE ENVELOPE
+    PRIORITY MAIL INTERNATIONAL
+    PRIORITY MAIL INTERNATIONAL FLAT-RATE ENVELOPE
+    PRIORITY MAIL INTERNATIONAL REGULAR FLAT-RATE BOXES
+    PRIORITY MAIL INTERNATIONAL LARGE FLAT-RATE BOX
+    PRIORITY MAIL INTERNATIONAL SMALL FLAT-RATE BOX
+    FIRST CLASS MAIL INTERNATIONAL LARGE ENVELOPE
+    FIRST CLASS MAIL INTERNATIONAL PACKAGE
     MATTER FOR THE BLIND - ECONOMY MAIL
 
 
@@ -262,7 +293,7 @@ Your USPS webtools passwd, which was obtained by registering.
 This will default to $Variable->{USPS_PASSWORD}, which is the 
 preferred way to set this parameter.
 
-=back 4
+=back
 
 =head2 Extended Parameters (domestic and international services)
 
@@ -284,7 +315,7 @@ the whole shipment, and the total rate will be calculated accordingly.
 Example: with modulo = 10, a 34.5lbs. shipment will be calculated as 3 parcels 
 weighing 10lbs. each, plus one parcel weighing 4lbs. 8oz.
 
-=back 4
+=back
 
 =head2 Extended Parameters for domestic (U.S.) services only
 
@@ -319,7 +350,7 @@ Possible value are 'True' and 'False'. Indicates whether or not the shipment
 qualifies for machine processing by UPS. Default is $Variable->{USPS_MACHINABLE}
 or 'False". Consult the USPS service guides for more info on this subject.
 
-=back 4
+=back
 
 =head2 Extended parameters for International services only
 
@@ -347,7 +378,7 @@ table which is distributed with the standard demo, so modifications may be neede
 if you intend to use USPS international services. Consult the USPS International
 Services guide for more information.
 
-=back 4
+=back
 
 =head1 BUGS
 
@@ -355,7 +386,9 @@ We shall see....
 
 =head1 AUTHORS
 
-Ed LaFrance <edl@newmediaems.com>.
+ Ed LaFrance <edl@newmediaems.com>
+ Josh Lavin <josh@perusion.com>
+ Mathew Jones <mat@bibliopolis.com>
 
 =cut
 EOD

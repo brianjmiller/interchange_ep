@@ -1,6 +1,6 @@
 # Vend::Interpolate - Interpret Interchange tags
 # 
-# $Id: Interpolate.pm,v 2.308 2008-09-21 11:40:27 racke Exp $
+# $Id: Interpolate.pm,v 2.313 2009-05-01 13:50:00 pajamian Exp $
 #
 # Copyright (C) 2002-2008 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
@@ -28,7 +28,7 @@ package Vend::Interpolate;
 require Exporter;
 @ISA = qw(Exporter);
 
-$VERSION = substr(q$Revision: 2.308 $, 10);
+$VERSION = substr(q$Revision: 2.313 $, 10);
 
 @EXPORT = qw (
 
@@ -69,7 +69,7 @@ the lists used in the widely employed [loop ..], [search-region ...],
 
 This module makes heavy use of precompiled regexes. You will notice variables
 being used in the regular expression constructs. For example, C<$All> is a
-a synonym for C<[\000-\377]*>, C<$Some> is equivalent to C<[\000-\377]*?>, etc.
+a synonym for C<(?s:.)*>, C<$Some> is equivalent to C<(?s:.)*?>, etc.
 This is not only for clarity of the regular expression, but for speed.
 
 =cut
@@ -78,7 +78,7 @@ This is not only for clarity of the regular expression, but for speed.
 push @EXPORT, 'tag_sql_list';
 # END SQL
 
-use Safe;
+use Vend::Safe;
 
 my $hole;
 BEGIN {
@@ -162,7 +162,7 @@ use vars @Share_vars, @Share_routines,
 		 qw/$ready_safe $safe_safe/;
 use vars qw/%Filter %Ship_handler $Safe_data/;
 
-$ready_safe = new Safe;
+$ready_safe = new Vend::Safe;
 $ready_safe->trap(qw/:base_io/);
 $ready_safe->untrap(qw/sort ftfile/);
 
@@ -175,13 +175,10 @@ sub reset_calc {
 	else {
 		my $pkg = 'MVSAFE' . int(rand(100000));
 		undef $MVSAFE::Safe;
-		$ready_safe = new Safe $pkg;
+		$ready_safe = new Vend::Safe $pkg;
 		$ready_safe->share_from('MVSAFE', ['$safe']);
 #::logDebug("new safe made=$ready_safe->{Root}");
 		
-		Vend::CharSet->utf8_safe_regex_workaround($ready_safe)
-		    if $::Variable->{MV_UTF8};
-
 		$ready_safe->trap(@{$Global::SafeTrap});
 		$ready_safe->untrap(@{$Global::SafeUntrap});
 		no strict 'refs';
@@ -307,8 +304,8 @@ $cond_op{len} = $cond_op{length};
 my %T;
 my %QR;
 
-my $All = '[\000-\377]*';
-my $Some = '[\000-\377]*?';
+my $All = '(?s:.)*';
+my $Some = '(?s:.)*?';
 my $Codere = '[-\w#/.]+';
 my $Coderex = '[-\w:#=/.%]+';
 my $Filef = '(?:%20|\s)+([^]]+)';
@@ -324,8 +321,8 @@ my $Opt = '\s*([-\w#/.]+)?';
 my $T    = '\]';
 my $D    = '[-_]';
 
-my $XAll = qr{[\000-\377]*};
-my $XSome = qr{[\000-\377]*?};
+my $XAll = qr{(?s:.)*};
+my $XSome = qr{(?s:.)*?};
 my $XCodere = qr{[-\w#/.]+};
 my $XCoderex = qr{[-\w:#=/.%]+};
 my $XMandx = qr{\s+([-\w:#=/.%]+)};
@@ -993,7 +990,7 @@ sub conditional {
 				if defined $comp;
 		delete $::Scratch->{$term};
 	}
-	elsif($base =~ /^value/) {
+	elsif($base =~ /^e?value/) {
 		$op =	qq%$::Values->{$term}%;
 		$op = "q{$op}" unless defined $noop;
 		$op .=	qq%	$operator $comp%
@@ -1204,8 +1201,6 @@ sub conditional {
 			last RUNSAFE;
 		}
 
-		Vend::CharSet->utf8_safe_regex_workaround($ready_safe)
-		    if $::Variable->{MV_UTF8};
 		$ready_safe->trap(@{$Global::SafeTrap});
 		$ready_safe->untrap(@{$Global::SafeUntrap});
 		$status = $ready_safe->reval($op) ? 1 : 0;
@@ -1574,7 +1569,7 @@ EOF
 
 # END MVASP
 
-$safe_safe = new Safe;
+$safe_safe = new Vend::Safe;
 
 sub tag_perl {
 	my ($tables, $opt,$body) = @_;
@@ -1671,7 +1666,7 @@ sub tag_perl {
 
 	$MVSAFE::Safe = 1;
 	if (
-		$opt->{global}
+		( $opt->{global} or (! defined $opt->{global} and $Global::PerlAlwaysGlobal->{$Vend::Cat} ) )
 			and
 		$Global::AllowGlobal->{$Vend::Cat}
 		)
@@ -1680,7 +1675,13 @@ sub tag_perl {
 	}
 
 	if(! $MVSAFE::Safe) {
-		$result = eval($body);
+		if ($Global::PerlNoStrict->{$Vend::Cat} || $opt->{no_strict}) {
+			no strict;
+			$result = eval($body);
+		}
+		else {
+			$result = eval($body);
+		}
 	}
 	else {
 		$result = $ready_safe->reval($body);
@@ -1758,9 +1759,16 @@ sub show_tags {
 
 sub pragma {
 	my($pragma, $opt, $text) = @_;
-	$pragma =~ s/\W+//g;
+	my $value;
 
-	my $value = defined $opt->{value} ? $opt->{value} : 1;
+	# pragma value may come in attached to the pragma name from [tag pragma name value][/tag]
+	$pragma =~ s/^(\w+)(?:\s+(\w+))?.*/$1/ and $value = $2;
+
+	# or as a specified option [tag op=pragma arg="name" value="value"][/tag]
+	$value = defined $opt->{value} ? $opt->{value} : 1
+		unless defined $value;
+
+	# or as a tag body like [tag pragma name]value[/pragma]
 	if(! defined $opt->{value} and $text =~ /\S/) {
 		$value = $text;
 	}
@@ -2081,22 +2089,19 @@ sub mvtime {
 	my $now = $opt->{time} || time();
 	$fmt = '%Y%m%d' if $opt->{sortable};
 
-	if($opt->{adjust}) {
-		my $neg = $opt->{adjust} =~ s/^\s*-\s*//;
-		my $diff;
-		$opt->{adjust} =~ s/^\s*\+\s*//;
-		if($opt->{hours}) {
-			$diff = (60 * 60) * ($opt->{adjust} || $opt->{hours});
+	if($opt->{adjust} || $opt->{hours}) {
+		my $adjust = $opt->{adjust};
+		if ($opt->{hours}) {
+			$adjust ||= $opt->{hours};
+			$adjust .= ' hours';
 		}
-		elsif($opt->{adjust} !~ /[A-Za-z]/) {
-			$opt->{adjust} =~ s:(\d+)(\d[05])$:$1 + $2 / 60:e;
-			$opt->{adjust} =~ s/00$//;
-			$diff = (60 * 60) * $opt->{adjust};
+
+		elsif ($adjust !~ /[A-Za-z]/) {
+			$adjust =~ s/(?<=\d)(\d[05])// and $adjust += $1 / 60;
+			$adjust .= ' hours';
 		}
-		else {
-			$diff = Vend::Config::time_to_seconds($opt->{adjust});
-		}
-		$now = $neg ? $now - $diff : $now + $diff;
+
+		$now = adjust_time($adjust, $now, $opt->{compensate_dst});
 	}
 
 	$fmt ||= $opt->{format} || $opt->{fmt} || '%c';
@@ -2323,7 +2328,8 @@ sub tag_value_extended {
 			);
 			return $no;
 		}
-#::logDebug(">$file \$CGI::file{$var}" . uneval($opt)); 
+#::logDebug(">$file \$CGI::file{$var}" . uneval($opt));
+		$opt->{encoding} ||= $CGI::file_encoding{$var};
 		Vend::Util::writefile(">$file", \$CGI::file{$var}, $opt)
 			and return $yes;
 		return $no;
@@ -2685,7 +2691,7 @@ sub tag_area {
 		$Vend::Session->{$aloc}{$page} = $opt->{alias};
 	}
 
-	my $r;
+	my ($r, $subname);
 
 	if ($opt->{search}) {
 		$page = escape_scan($opt->{search});
@@ -2719,6 +2725,13 @@ sub tag_area {
 		$page = escape_scan($arg);
 		undef $arg;
 	}
+
+	elsif ($subname = $Vend::Cfg->{SpecialSub}{areapage}) {
+            my $sub = $Vend::Cfg->{Sub}{$subname} || $Global::GlobalSub->{$subname};
+            my $newpage = $sub->($page, $opt);
+            $page = $newpage if defined $newpage;
+            $arg = $opt->{arg};
+        }
 
 	$urlroutine = $opt->{secure} ? \&secure_vendUrl : \&vendUrl;
 
@@ -3136,7 +3149,7 @@ sub tag_search_region {
 
 sub find_sort {
 	my($text) = @_;
-	return undef unless defined $$text and $$text =~ s#\[sort(([\s\]])[\000-\377]+)#$1#io;
+	return undef unless defined $$text and $$text =~ s#\[sort(([\s\]])(?s:.)+)#$1#io;
 	my $options = find_close_square($$text);
 	$$text = substr( $$text,length($options) + 1 )
 				if defined $options;
@@ -3167,9 +3180,10 @@ sub find_sort {
 sub more_link_template {
 	my ($anchor, $arg, $form_arg) = @_;
 
-	my $url = tag_area("scan/MM=$arg", '', {
-	    form => $form_arg,
-	    secure => $CGI::secure,
+	my $url = tag_area(undef, undef, {
+	    search         => "MM=$arg",
+	    form           => $form_arg,
+	    match_security => 1,
 	});
 
 	my $lt = $link_template;
@@ -4654,7 +4668,7 @@ sub region {
 		if($CGI::values{mv_more_matches} || $CGI::values{MM}) {
 
 			### It is a more function, we need to get the parameters
-			find_search_params();
+			find_search_params(\%CGI::values);
 			delete $CGI::values{mv_more_matches};
 		}
 		elsif ($opt->{search}) {
@@ -4893,7 +4907,7 @@ sub tag_loop_list {
 			my @items = split /\s*,\s*/, $list;
 			for(@items) {
 				my ($o, $l) = split /=/, $_;
-				$l = $o unless $l;
+				$l = $o unless defined $l && $l =~ /\S/;
 				push @rows, [ $o, $l ];
 			}
 		};
@@ -4957,12 +4971,22 @@ sub fly_page {
 	if ($subname = $Vend::Cfg->{SpecialSub}{flypage}) {
 		my $sub = $Vend::Cfg->{Sub}{$subname} || $Global::GlobalSub->{$subname}; 
 		$listref = $sub->($code);
-		$listref = { mv_results => [[$listref]] } unless ref($listref);
-		$base = $listref;
+
+		return unless defined $listref;
+
+		if (ref $listref) {
+			$base = $listref;
+		}
+
+		else {
+			$code = $listref;
+			$listref = { mv_results => [[$listref]] };
+			$base = product_code_exists_ref($code);
+		}
 	}
 	else {
-		$base = product_code_exists_ref($code);
 		$listref = {mv_results => [[$code]]};
+		$base = product_code_exists_ref($code);
 	}
 	
 #::logDebug("fly_page: code=$code base=$base page=" . substr($page, 0, 100));
@@ -5085,7 +5109,7 @@ sub discount_price {
 		$Vend::Interpolate::s = $return ||= $subtotal;
         $return = $ready_safe->reval($discount);
 		if($@) {
-			::logError("Bad discount code for %s: %s", $discount);
+			::logError("Bad discount code for %s: %s", $discount, $@);
 			$return = $subtotal;
 			next;
 		}
@@ -5322,11 +5346,10 @@ sub push_warning {
 
 sub taxable_amount {
 	my($cart, $dspace) = @_;
-    my($taxable, $i, $code, $item, $tmp, $quantity);
 
 	return subtotal($cart || undef, $dspace || undef) unless $Vend::Cfg->{NonTaxableField};
 
-	my($save, $oldspace);
+	my ($taxable, $i, $code, $item, $quantity, $save, $oldspace);
 
     if ($cart) {
         $save = $Vend::Items;
@@ -5342,9 +5365,8 @@ sub taxable_amount {
 		$item =	$Vend::Items->[$i];
 		next if is_yes( $item->{mv_nontaxable} );
 		next if is_yes( item_field($item, $Vend::Cfg->{NonTaxableField}) );
-		$tmp = item_subtotal($item);
 		unless (%$::Discounts) {
-			$taxable += $tmp;
+			$taxable += item_subtotal($item);
 		}
 		else {
 			$taxable += apply_discount($item);
@@ -5541,8 +5563,15 @@ sub tax_vat {
 		my @pfield = split /:+/, $pfield;
 
 		for my $item (@$Vend::Items) {
-			my $rhash = tag_data($item->{mv_ib}, undef, $item->{code}, { hash => 1});
-			my $cat = join ":", @{$rhash}{@pfield};
+			my ($tab, $col);
+			if($pfield[1]) {
+				($tab, $col) = @pfield;
+			}
+			else {
+				$tab = $item->{mv_ib};
+				$col = $pfield[0]; 
+			}
+			my $cat = tag_data($tab, $col, $item->{code});
 			my $rate = defined $tax->{$cat} ? $tax->{$cat} : $tax->{default};
 #::logDebug("item $item->{code} cat=$cat rate=$rate");
 			$rate = percent_rate($rate);
@@ -5701,7 +5730,7 @@ sub salestax {
 # Returns just subtotal of items ordered, with discounts
 # applied
 sub subtotal {
-	my($cart, $dspace) = @_;
+	my($cart, $dspace, $nodiscount) = @_;
 	
 	### If the user has assigned to salestax,
 	### we use their value come what may, no rounding
@@ -5711,49 +5740,57 @@ sub subtotal {
 			&& length( $Vend::Session->{assigned}{subtotal});
 	}
 
-    my ($save, $subtotal, $i, $item, $tmp, $cost, $formula, $oldspace);
+    my ($save, $subtotal, $i, $item, $cost, $formula, $oldspace);
 	if ($cart) {
 		$save = $Vend::Items;
 		tag_cart($cart);
 	}
 
 	levies() unless $Vend::Levying;
+
+	$subtotal = 0;
 	
-	# Use switch_discount_space unconditionally to guarantee existance of proper discount structures.
-	$oldspace = switch_discount_space($dspace || $Vend::DiscountSpaceName);
-	
-	my $discount = (ref($::Discounts) eq 'HASH' and %$::Discounts);
-
-    $subtotal = 0;
-	$tmp = 0;
-
-    foreach $i (0 .. $#$Vend::Items) {
-        $item = $Vend::Items->[$i];
-        $tmp = Vend::Data::item_subtotal($item);
-        if($discount || $item->{mv_discount}) {
-            $subtotal +=
-                apply_discount($item, $tmp);
-        }
-        else { $subtotal += $tmp }
-	}
-
-	if (defined $::Discounts->{ENTIRE_ORDER}) {
-		$formula = $::Discounts->{ENTIRE_ORDER};
-		$formula =~ s/\$q\b/tag_nitems()/eg; 
-		$formula =~ s/\$s\b/$subtotal/g; 
-		$cost = $Vend::Interpolate::ready_safe->reval($formula);
-		if($@) {
-			logError
-				"Discount ENTIRE_ORDER has bad formula. Returning normal subtotal.\n$@";
-			$cost = $subtotal;
+	if ($nodiscount) {
+		foreach $i (0 .. $#$Vend::Items) {
+			$item = $Vend::Items->[$i];
+			$subtotal += Vend::Data::item_subtotal($item);
 		}
-		$subtotal = $cost;
 	}
-	$Vend::Items = $save if defined $save;
-	$Vend::Session->{latest_subtotal} = $subtotal;
+	else {
+		# Use switch_discount_space unconditionally to guarantee existance of proper discount structures.
+		$oldspace = switch_discount_space($dspace || $Vend::DiscountSpaceName);
+	
+		my $discount = (ref($::Discounts) eq 'HASH' and %$::Discounts);
 
-	# Switch to original discount space if an actual switch occured.
-	switch_discount_space($oldspace) if $dspace and defined $oldspace;
+		foreach $i (0 .. $#$Vend::Items) {
+			$item = $Vend::Items->[$i];
+			if ($discount || $item->{mv_discount}) {
+				$subtotal += apply_discount($item);
+			} else {
+				$subtotal += Vend::Data::item_subtotal($item);
+			}
+		}
+
+		if (defined $::Discounts->{ENTIRE_ORDER}) {
+			$formula = $::Discounts->{ENTIRE_ORDER};
+			$formula =~ s/\$q\b/tag_nitems()/eg; 
+			$formula =~ s/\$s\b/$subtotal/g; 
+			$cost = $Vend::Interpolate::ready_safe->reval($formula);
+			if ($@) {
+				logError
+					"Discount ENTIRE_ORDER has bad formula. Returning normal subtotal.\n$@";
+				$cost = $subtotal;
+			}
+			$subtotal = $cost;
+		}
+
+		$Vend::Session->{latest_subtotal} = $subtotal;
+		
+		# Switch to original discount space if an actual switch occured.
+		switch_discount_space($oldspace) if $dspace and defined $oldspace;
+	}
+	
+	$Vend::Items = $save if defined $save;
 
     return $subtotal;
 }

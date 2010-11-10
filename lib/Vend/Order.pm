@@ -1,15 +1,10 @@
 # Vend::Order - Interchange order routing routines
 #
-# $Id: Order.pm,v 2.103 2008-10-24 10:11:35 pajamian Exp $
-#
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program was originally based on Vend 0.2 and 0.3
 # Copyright 1995 by Andrew M. Wilcox <amw@wilcoxsolutions.com>
-#
-# CyberCash 3 native mode enhancements made by and
-# Copyright 1998 by Michael C. McCune <mmccune@ibm.net>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +24,7 @@
 package Vend::Order;
 require Exporter;
 
-$VERSION = substr(q$Revision: 2.103 $, 10);
+$VERSION = '2.109';
 
 @ISA = qw(Exporter);
 
@@ -446,7 +441,6 @@ sub build_cc_info {
 			{MV_CREDIT_CARD_TYPE}
 			{MV_CREDIT_CARD_NUMBER}
 			{MV_CREDIT_CARD_EXP_MONTH}/{MV_CREDIT_CARD_EXP_YEAR}
-			{MV_CREDIT_CARD_CVV2}
 		)) . "\n";
 
 	$cardinfo->{MV_CREDIT_CARD_TYPE} ||=
@@ -1122,7 +1116,7 @@ $state_template{CA} = <<EOF;
 EOF
 
 $zip_error{US} = "'%s' not a US zip code";
-$zip_routine{US} = sub { $_[0] =~ /^\s*\d\d\d\d\d(?:-?\d\d\d\d)?$/ };
+$zip_routine{US} = sub { $_[0] =~ /^\s*\d\d\d\d\d(?:-?\d\d\d\d)?\s*$/ };
 
 $zip_error{CA} = "'%s' not a Canadian postal code";
 $zip_routine{CA} = sub {
@@ -1971,17 +1965,15 @@ sub route_order {
 						$main->{rollback}
 			);
 		}
+        $Vend::Session->{order_error} = $errors;
+        ::logError("ERRORS on ORDER %s:\n%s", $::Values->{mv_order_number}, $errors);
+
 		if ($main->{errors_to}) {
-			$Vend::Session->{order_error} = $errors;
 			send_mail(
 				$main->{errors_to},
 				errmsg("ERRORS on ORDER %s", $::Values->{mv_order_number}),
 				$errors
 				);
-		}
-		else {
-			$Vend::Session->{order_error} = $errors;
-			::logError("ERRORS on ORDER %s:\n%s", $::Values->{mv_order_number}, $errors);
 		}
 	}
 
@@ -2222,6 +2214,51 @@ sub update_quantity {
 
 }
 
+## This routine loads AutoModifier values
+## The $recalc parameter indicates it is a recalc load and not 
+## an initial load, so that you don't reload all parameters only ones
+## that should change based on an option setting (different SKU)
+
+sub auto_modifier {
+	my ($item, $recalc) = @_;
+	my $code = $item->{code};
+	for my $mod (@{$Vend::Cfg->{AutoModifier}}) {
+		my $attr;
+		my ($table,$key,$foreign) = split /:+/, $mod, 3;
+
+		if($table =~ s/^!\s*//) {
+			# This is an auto-recalculating attribute
+		}
+		elsif($recalc) {
+			# Don't want to reload non-auto-recalculating attributes
+			next;
+		}
+
+		if($table =~ /=/) {
+			($attr, $table) = split /\s*=\s*/, $table, 2;
+		}
+
+		if(! $key and ! $foreign) {
+			$attr ||= $table;
+			$item->{$attr} = item_common($item, $table);
+			next;
+		}
+
+		unless ($key) {
+			$key = $table;
+			$table = $item->{mv_ib};
+		}
+
+		$attr ||= $key;
+
+
+		my $select = $foreign ? $item->{$foreign} : $code;
+		$select ||= $code;
+
+		$item->{$attr} = ::tag_data($table, $key, $select);
+	}
+}
+
 sub add_items {
 	my($items,$quantities) = @_;
 
@@ -2375,7 +2412,23 @@ sub add_items {
 			}
 		}
 		if (! $base ) {
-			logError( "Attempt to order missing product code: %s", $code);
+			my ($subname, $sub, $ret);
+			
+			if ($subname = $Vend::Cfg->{SpecialSub}{order_missing}) {
+				$sub = $Vend::Cfg->{Sub}{$subname} || $Global::GlobalSub->{$subname};
+				eval {
+					$ret = $sub->($code, $quantity);
+				};
+
+				if ($@) {
+					::logError("Error running %s subroutine %s: %s", 'order_missing', $subname, $@);
+				}
+			}
+
+			unless ($ret) {
+				logError( "Attempt to order missing product code: %s", $code);
+			}
+
 			next;
 		}
 
@@ -2436,37 +2489,8 @@ sub add_items {
 					$item->{$i} = $attr{$i}->[$j];
 				}
 			}
-			if($Vend::Cfg->{AutoModifier}) {
-				foreach $i (@{$Vend::Cfg->{AutoModifier}}) {
-					my $attr;
-					my ($table,$key,$foreign) = split /:+/, $i, 3;
 
-					if($table =~ /=/) {
-						($attr, $table) = split /\s*=\s*/, $table, 2;
-					}
-
-					if(! $key and ! $foreign) {
-						$attr ||= $table;
-						$item->{$attr} = item_common($item, $table);
-						next;
-					}
-
-					unless ($key) {
-						$key = $table;
-						$table = $item->{mv_ib};
-					}
-
-					$attr ||= $key;
-
-
-					my $select = $foreign ? $item->{$foreign} : $code;
-					$select ||= $code;
-
-#::logDebug("attr=$attr table=$table key=$key select=$select foreign=$foreign");
-					$item->{$attr} = ::tag_data($table, $key, $select);
-#::logDebug("item->$attr=$item->{$attr}");
-				}
-			}
+			auto_modifier($item) if $Vend::Cfg->{AutoModifier};
 
 			if(my $oe = $Vend::Cfg->{OptionsAttribute}) {
 			  eval {

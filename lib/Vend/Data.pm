@@ -1,8 +1,6 @@
 # Vend::Data - Interchange databases
 #
-# $Id: Data.pm,v 2.68 2008-08-12 22:02:57 jon Exp $
-# 
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program was originally based on Vend 0.2 and 0.3
@@ -308,8 +306,9 @@ sub import_text {
 			or die ::errmsg("No absolute file names like '%s' allowed.\n", $fn);
 	}
 	else {
-		Vend::Util::writefile($fn, $text)
-			or die ("Cannot write temporary import file $fn: $!\n");
+		# data is already in memory, do not create a temporary file
+		$options->{scalar_ref} = 1;
+		$fn = \$text;
 	}
 
 	my $save = $/;
@@ -321,7 +320,7 @@ sub import_text {
 	Vend::Table::Common::import_ascii_delimited($fn, $options);
 
 	$/ = $save;
-	unlink $fn unless $options->{'file'};
+	unlink $fn unless $options->{'file'} or $options->{scalar_ref};
 	return 1;
 }
 
@@ -2145,7 +2144,7 @@ sub update_data {
 			$safe = $Vend::Interpolate::ready_safe;
 		}
 		else {
-			$safe = new Safe;
+			$safe = new Vend::Safe;
 		}
 		$base_db->column_exists($blob_ptr)
 			or undef $blob_ptr;

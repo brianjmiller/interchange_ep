@@ -4,11 +4,9 @@ eval 'exec /usr/local/bin/perl  -S $0 ${1+"$@"}'
     if 0; # not running under some shell
 ##!~_~perlpath~_~
 #
-# Interchange version 5.7.1
+# Interchange version 5.7.6
 #
-# $Id: interchange.PL,v 2.110 2008-11-12 04:15:22 jon Exp $
-#
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2010 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 # http://www.icdevgroup.org/
 #
@@ -34,7 +32,28 @@ eval 'exec /usr/local/bin/perl  -S $0 ${1+"$@"}'
 
 use strict;
 
-use Interchange::Deployment;
+BEGIN {
+	select STDERR;
+	$| = 1;
+	select STDOUT;
+	$| = 1;
+
+	if ($ENV{INTERCHANGE_INSTALLPRIVLIB}) {
+		unshift @INC, $ENV{INTERCHANGE_INSTALLPRIVLIB};
+	}
+	else {
+		unshift @INC, '/home/ethan/camp23/interchange/lib';
+#		unshift @INC, '~_~INSTALLPRIVLIB~_~';
+	}
+
+	if ($ENV{INTERCHANGE_INSTALLARCHLIB}) {
+		unshift @INC, $ENV{INTERCHANGE_INSTALLARCHLIB};
+	}
+	else {
+		unshift @INC, '/home/ethan/camp23/interchange';
+#		unshift @INC, '~_~INSTALLARCHLIB~_~';
+	}
+}
 
 use Config;
 no Config;
@@ -56,7 +75,7 @@ BEGIN {
 		shift @INC;
 	}
 	
-	$Global::VendRoot = $Global::VendRoot || '/home/timesheet/live/interchange';
+	$Global::VendRoot = $Global::VendRoot || '/home/ethan/camp23/interchange';
 #	$Global::VendRoot = $Global::VendRoot || '~_~INSTALLARCHLIB~_~';
 
 	if( ($Config{usethreads} || $Config{useithreads} || $Config{use5005threads}) ) {
@@ -138,7 +157,7 @@ use vars qw($VERSION);
 require Exporter;
 
 BEGIN {
-	$VERSION = '5.7.1';
+	$VERSION = '5.7.6';
 }
 
 use Fcntl;
@@ -331,7 +350,7 @@ sub dontwarn {
 }
 
 sub version {
-	print "Interchange version $VERSION copyright 2002-2008 Interchange Development Group and others.\n";
+	print "Interchange version $VERSION copyright 2002-2010 Interchange Development Group and others.\n";
 }
 
 =head1 NAME
@@ -344,7 +363,7 @@ interchange [--options] [file]
 
 =head1 VERSION
 
-5.7.1
+5.7.6
 
 =head1 DESCRIPTION
 
@@ -771,13 +790,6 @@ sub main_loop {
 			unless $ENV{MINIVEND_ROOT} =~ m{/blib$};
 	}
 
-# LEGACY
-	# Kept here for compatibility
-	eval {
-		require Vend::Payment::CyberCash;
-	};
-# END LEGACY
-
 	# These modules no longer necessary, why take up memory?
 	delete $INC{'Getopt/Long.pm'};
 
@@ -825,7 +837,6 @@ print errmsg("\n##### DEBUG MODE, running in foreground #####\n") if $Global::DE
 		exit;
 	}
 
-	$| = 1;
 	logGlobal( "Interchange V$VERSION");
 
 	SIGNALCHECK: {
@@ -895,11 +906,11 @@ EOF
 			# See if catalog configuration erred in some way....
 			if ($@ or ! defined $c) {
 				my $msg = $@;
-				print "\n$msg\n\a$g->{'name'}: error in configuration. Skipping.\n";
 				$msg =~ s/\s+$//;
 				$msg = " -- $msg" if $msg;
 				logGlobal $g->{'name'} . ": config error$msg. Skipping.";
 				undef $Global::Selector{$g->{'script'}};
+				print "failed.\n"  unless $Vend::Quiet or $g->{name} =~ /^_/;
 				next;
 			}
 
@@ -938,13 +949,6 @@ EOF
 		# Set $0 to something pretty for ps(1).
 		# This is all done in Vend::Server::set_process_name now.
 		Vend::Server::set_process_name($Global::VendRoot);
-
-		# We won't have much output on any of this, but if we get some
-		# we want it immediately
-		select STDERR; 
-		$| = 1;
-		select STDOUT;
-		$| = 1;
 
 		# This should never return unless killed or a catastrophic error
 		Vend::Server::run_server();
@@ -985,7 +989,7 @@ GNU General Public License.
 
 =head1 COPYRIGHT
 
-    Copyright (C) 2002-2008 Interchange Development Group
+    Copyright (C) 2002-2010 Interchange Development Group
     Copyright (C) 1995-2002 Red Hat, Inc.
     All rights reserved except those granted in the license.
 
@@ -997,23 +1001,23 @@ Mike Heins is the primary author of Interchange.
 
 The Interchange Development Group is:
 
-Dan Browning
-David Kelly
-Davor Ocelic
-Ethan Rowe
-Gert van der Spoel
-Greg Hanson
-Jon Jensen
-Jonathan Clark
-Kevin Walsh
-Mark Johnson
-Mike Heins
-Paul Vinciguerra
-Peter Ajamian
-Stefan Hornburg (aka Racke), captain
-Randy Moore
-Ron Phipps
-Ton Verhagen
+    Daniel Browning
+    David Christensen
+    Davor Ocelic
+    Ethan Rowe
+    Gert van der Spoel
+    Greg Hanson
+    Jon Jensen
+    JT Justman
+    Jure Kodzoman
+    Kevin Walsh
+    Mark Johnson
+    Mark Lipscombe
+    Mike Heins
+    Peter Ajamian
+    Ron Phipps
+    Stefan Hornburg (aka Racke), captain
+    Ton Verhagen
 
 Please do not contact the authors directly for help with the system.
 Use the Interchange mail list:
@@ -1032,6 +1036,15 @@ Andrew Wilcox <amw@wilcoxsolutions.com>. Interchange could never have
 come into being without him. Interchange was based on Vend 0.2, with
 portions from Vend 0.3; both were produced in 1995.
 
+Special thanks to Retired Core Team Members:
+
+    Brev Patterson
+    David Kelly
+    Ed LaFrance
+    Jonathan Clark
+    Paul Vinciguerra
+    Randy Moore
+
 Contributions to Interchange have been made by:
 
 =cut
@@ -1040,42 +1053,62 @@ Contributions to Interchange have been made by:
 
 =pod
 
-    Andreas Koenig           Jason Holt
-    Bill Carr                Jason Kohles
-    Bill Dawkins             Javier Martin
-    Bill Randle              Jeff Carnahan
-    Birgitt Funk             Jeff Nappi
-    Bob Jordan               Jochen Wiedmann
-    Brev Patterson           José Mª Revuelto
-    Brian Bullen             Jure Kodzoman
-    Brian Kosick             Jurgen Botz
-    Bruce Albrecht           Keiko
-    Cameron Prince           Keith Oberlin
-    Chen Naor                Kim Lauritz Christensen
-    Christian Mueller        Larry Leszczynski
-    Christopher Miller       Marc Austin
-    Christopher Thompson     Mark Stosberg
-    Dan Busarow              Massimiliano Ciancio
-    Dan Helfman              Matthew Schick
-    Daniel Thompson          Michael McCune
-    Dave Wingate             Michael Wilk
-    David Adams              Mike Frager
-    Dennis Cronin            Neil Evans
-    Don Grodecki             Nelson Ferrari
-    Ed LaFrance              Raj Goel
-    Frank Bonita             Ray Desjardins
-    Frederic Steinfels       Shozo Murahashi
-    Gunnar Hellekson         Sonny Cook
-    Hamish Bradick           Steve Graham
-    Hans-Joachim Leidinger   Tim Baverstock
-    Heinz Wittenbecher       Tom Friedel
-    Hiroyuki Cozy Kojima     Tommi Laberno
-    Ignacio Lizarán          Troy Davis
-    Jack Tsai                Victor Nolton 
-                             William Dan Terry
-    and many others
+    Alison Smith                        Jonathan Walker
+    Andreas Koenig                      Jordan Adler
+    Andrew Rich                         Josh Braegger
+    Bill Carr                           Josh Lavin
+    Bill Dawkins                        José Mª Revuelto
+    Bill Randle                         Jurgen Botz
+    Birgitt Funk                        Justin Otten
+    Bob Jordan                          Kaare Rasmussen
+    Brent Kelly                         Keiko
+    Brian Bullen                        Keith Oberlin
+    Brian Kosick                        Kim Lauritz Christensen
+    Brian Miller                        Larry Huffman
+    Bruce Albrecht                      Larry Leszczynski
+    Cameron Prince                      Lars Tode
+    Carl Bailey                         Lyn St George
+    Chen Naor                           Marc Austin
+    Christian Mueller                   Mark Stosberg
+    Christopher Miller                  Marty Tennison
+    Christopher Thompson                Massimiliano Ciancio
+    Christopher Wenham                  Mat Jones
+    Dan Busarow                         Matthew Schick
+    Dan Collis-Puro                     Max Cohan
+    Dan Helfman                         Michael Lehmkuhl
+    Daniel Hutchinson                   Michael McCune
+    Daniel Thompson                     Michael Wilk
+    Dave Wingate                        Mick Weiss
+    David Adams                         Mike Frager
+    Dennis Cronin                       Neil Evans
+    Don Grodecki                        Nelson Ferrari
+    Don Hathaway                        Paul Delys
+    Donald Alexander                    Paul Jordan
+    Eric Zarko                          Phil Smith
+    Frank Bonita                        Raj Goel
+    Frederic Steinfels                  Ray Desjardins
+    Gary Benson                         Reid Sutherland
+    Gunnar Hellekson                    René Hertell
+    Hamish Bradick                      Ryan Perry
+    Hans-Joachim Leidinger              Sergiusz Jarczyk
+    Heinz Wittenbecher                  Shozo Murahashi
+    Hiroyuki Cozy Kojima                Sonny Cook
+    Ignacio Lizarán                     Spencer Christensen
+    Ivan Kohler                         Steve Graham
+    Jack Tsai                           Thomas J.M. Burton
+    Jason Holt                          Tim Baverstock
+    Jason Kohles                        Tom Friedel
+    Javier Martin                       Tom Tucker
+    Jeff Barr                           Tommi Labermo
+    Jeff Boes                           Toni Mueller
+    Jeff Carnahan                       Troy Davis
+    Jeff Fearn                          Victor Nolton
+    Jeff Nappi                          William Dan Terry
+    Jochen Wiedmann                     Zachary Matthews
 
-and, of course, the entire Perl team without whom Interchange could not exist.
+    and many others.
+
+And, of course, the entire Perl team without whom Interchange could not exist.
 
 =cut
 

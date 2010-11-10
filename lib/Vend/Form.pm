@@ -1,6 +1,6 @@
 # Vend::Form - Generate Form widgets
 # 
-# $Id: Form.pm,v 2.76 2008-05-10 14:39:53 mheins Exp $
+# $Id: Form.pm,v 2.77 2009-04-05 19:24:36 mheins Exp $
 #
 # Copyright (C) 2002-2008 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
@@ -39,7 +39,7 @@ use vars qw/@ISA @EXPORT @EXPORT_OK $VERSION %Template %ExtraMeta/;
 require Exporter;
 @ISA = qw(Exporter);
 
-$VERSION = substr(q$Revision: 2.76 $, 10);
+$VERSION = substr(q$Revision: 2.77 $, 10);
 
 @EXPORT = qw (
 	display
@@ -62,7 +62,7 @@ tag_accessories stuff. Allows user-added widgets.
 
 =cut
 
-my $Some = '[\000-\377]*?';
+my $Some = '(?s:.)*?';
 my $Codere = '[-\w#/.]+';
 my $Tag = new Vend::Tags;
 
@@ -76,6 +76,8 @@ my $Tag = new Vend::Tags;
 		qq({ROWS?} size="{ROWS}"{/ROWS?})
 		.
 		qq({DISABLED?} disabled{/DISABLED?})
+		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
 		.
 		qq({MULTIPLE?} multiple{/MULTIPLE?})
 		.
@@ -101,6 +103,8 @@ my $Tag = new Vend::Tags;
 		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
 		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
+		.
 		qq({WRAP?} wrap="{WRAP}"{/WRAP?})
 		.
 		qq({EXTRA?} {EXTRA}{/EXTRA?})
@@ -114,6 +118,8 @@ my $Tag = new Vend::Tags;
 		.
 		qq({COLS?} size="{COLS}"{/COLS?})
 		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
+		.
 		qq({MAXLENGTH?} maxlength="{MAXLENGTH}"{/MAXLENGTH?})
 		.
 		qq({EXTRA?} {EXTRA}{/EXTRA?})
@@ -125,6 +131,8 @@ my $Tag = new Vend::Tags;
 		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
 		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
+		.
 		qq({COLS?} size="{COLS}"{/COLS?})
 		.
 		qq({EXTRA?} {EXTRA}{/EXTRA?})
@@ -135,6 +143,8 @@ my $Tag = new Vend::Tags;
 		qq({PREPEND}<input type="file" name="{NAME}" value="{ENCODED}")
 		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
+		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
 		.
 		qq({COLS?} size="{COLS}"{/COLS?})
 		.
@@ -149,6 +159,8 @@ my $Tag = new Vend::Tags;
 		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
 		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
+		.
 		qq({DISABLED?} disabled{/DISABLED?})
 		.
 		qq({MAXLENGTH?} maxlength="{MAXLENGTH}"{/MAXLENGTH?})
@@ -161,6 +173,8 @@ my $Tag = new Vend::Tags;
 		,
 	hidden =>
 		qq({PREPEND}<input type="hidden" name="{NAME}" value="{ENCODED}")
+		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
 		.
 		qq({EXTRA?} {EXTRA}{/EXTRA?})
 		.
@@ -178,13 +192,15 @@ my $Tag = new Vend::Tags;
 		.
 		qq({EXTRA?} {EXTRA}{/EXTRA?})
 		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
+		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
 		.
 		qq({DISABLED?} disabled{/DISABLED?})
 		.
 		qq({SELECTED?} checked{/SELECTED?})
 		.
-		qq(>&nbsp;{TTITLE?}<span title="{TTITLE}">{/TTITLE?}{TLABEL}{TTITLE?}</span>{/TTITLE?})
+		qq(>&nbsp;{TTITLE?}<span title="{TTITLE}">{/TTITLE?}{TEXTID?}<label for="{TEXTID}">{/TEXTID?}{TLABEL}{TEXTID?}</label>{/TEXTID?}{TTITLE?}</span>{/TTITLE?})
 		,
 	boxnbsp =>
 		qq(<input type="{VARIANT}" name="{NAME}" value="{TVALUE}")
@@ -197,14 +213,14 @@ my $Tag = new Vend::Tags;
 		.
 		qq({SELECTED?} checked{/SELECTED?})
 		.
-		qq(>&nbsp;{TTITLE?}<span title="{TTITLE}">{/TTITLE?}{TLABEL}{TTITLE?}</span>{/TTITLE?}&nbsp;&nbsp;)
+		qq(>&nbsp;{TTITLE?}<span title="{TTITLE}">{/TTITLE?}{TEXTID?}<label for="{TEXTID}">{/TEXTID?}{TLABEL}{TEXTID?}</label>{/TEXTID?}{TTITLE?}</span>{/TTITLE?}&nbsp;&nbsp;)
 		,
 	boxlabel =>
 		qq(<td{TD_LABEL?} {TD_LABEL}{/TD_LABEL?}{TTITLE?} title="{TTITLE}"{/TTITLE?}>)
 		.
 		qq({FONT?}<font size="{FONT}">{/FONT?})
 		.
-		qq({TLABEL}{FONT?}</font>{/FONT?})
+		qq({TEXTID?}<label for="{TEXTID}">{/TEXTID?}{TLABEL}{TEXTID?}</label>{/TEXTID?}{FONT?}</font>{/FONT?})
 		.
 		qq(</td>)
 		,
@@ -214,6 +230,8 @@ my $Tag = new Vend::Tags;
 		qq(<input type="{VARIANT}" name="{NAME}" value="{TVALUE}")
 		.
 		qq({TTITLE?} title="{TTITLE}"{/TTITLE?})
+		.
+		qq({TEXTID?} id="{TEXTID}"{/TEXTID?})
 		.
 		qq({DISABLED?} disabled{/DISABLED?})
 		.
@@ -497,8 +515,17 @@ sub date_widget {
 	$out .= qq{</select>};
 	$out .= qq{<input type="hidden" name="$name" value="/">};
 	$out .= qq{<select name="$name"$sel_extra>};
+
+	my $cy = $t[5] + 1900;
+
+	# If year_begin or year_end are /00+/, make current year
+	for(qw/ year_begin year_end /) {
+		if( length($opt->{$_}) > 1 and $opt->{$_} == 0) {
+			$opt->{$_} = $cy;
+		}
+	}
+
 	if(my $by = $opt->{year_begin} || $::Variable->{UI_DATE_BEGIN}) {
-		my $cy = $t[5] + 1900;
 		my $ey = $opt->{year_end}  || $::Variable->{UI_DATE_END} || ($cy + 10);
 		if($by < 100) {
 			$by = $cy - abs($by);
@@ -1003,6 +1030,11 @@ sub box {
 
 		$opt->{ttitle} = $help;
 
+		if($opt->{id}) {
+			$opt->{textid} = $opt->{id} . ($value eq '' ? 0 : $value);
+			$opt->{textid} =~ s/[^-\w]+//g;
+		}
+
 		$run .= attr_list($template, $opt);
 		$run .= '</tr>' if $inc && ! ($i % $inc);
 	}
@@ -1313,6 +1345,10 @@ if($opt->{debug}) {
 		$opt->{value} = $def if defined($def);
 	}
 
+	if($opt->{id}) {
+		$opt->{textid} = $opt->{id};
+	}
+
 	$opt->{value} = $opt->{default} if ! defined $opt->{value};
 
 	if(length($opt->{blank_default}) and ! length($opt->{value}) ) {
@@ -1416,6 +1452,8 @@ sub parse_type {
 			$opt->{time} = 1 if $extra =~ /time/i;
 			$opt->{ampm} = 1 if $extra =~ /ampm/i;
 			$opt->{blank} = 1 if $extra =~ /blank/i;
+			$opt->{year_begin} = $1 if $extra =~ s/year_?begin(\d+)//i;
+			$opt->{year_end} = $1 if $extra =~ s/year_?end(\d+)//i;
 			($extra =~ /\(\s*(\s*\d+\s*(,\s*\d+\s*)+)\s*\)/i
 					and $opt->{minutes} = $1)
 			  or

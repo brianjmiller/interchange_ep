@@ -5,7 +5,7 @@
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.  See the LICENSE file for details.
 # 
-# $Id: convert_date.tag,v 1.7 2007-03-30 23:40:56 pajamian Exp $
+# $Id: convert_date.tag,v 1.9 2009-05-01 13:50:00 pajamian Exp $
 
 UserTag convert-date Order       adjust
 UserTag convert-date PosNumber   1
@@ -14,7 +14,7 @@ UserTag convert-date AttrAlias   fmt format
 UserTag convert-date AttrAlias   days adjust
 UserTag convert-date HasEndTag
 UserTag convert-date Interpolate
-UserTag convert-date Version     $Revision: 1.7 $
+UserTag convert-date Version     $Revision: 1.9 $
 UserTag convert-date Routine     <<EOR
 sub {
     my ($adjust, $opt, $text) = @_;
@@ -43,21 +43,21 @@ sub {
 					$t[5] = $1;
 					$t[5] -= 1900;
 	}
+	elsif (exists $opt->{empty}) {
+		return $opt->{empty};
+	}
 	else {
 					$now = time();
 					@t = localtime($now) unless $adjust;
 	}
 
 	if ($adjust) {
+		if ($#t < 8) {
+			$t[8] = -1;
+		}
 		$now ||= POSIX::mktime(@t);
 		$adjust .= ' days' if $adjust =~ /^[-\s\d]+$/;
-
-		if ($adjust =~ s/^\s*-\s*//) {
-			@t = localtime($now - Vend::Config::time_to_seconds($adjust));
-		}
-		else {
-			@t = localtime($now + Vend::Config::time_to_seconds($adjust));
-		}
+		@t = localtime(adjust_time($adjust, $now, $opt->{compensate_dst}));
 	}
 
 	if (defined $opt->{raw} and Vend::Util::is_yes($opt->{raw})) {

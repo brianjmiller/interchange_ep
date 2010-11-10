@@ -1,8 +1,6 @@
 # Vend::Server - Listen for Interchange CGI requests as a background server
 #
-# $Id: Server.pm,v 2.93 2008-09-17 23:25:18 jon Exp $
-#
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program was originally based on Vend 0.2 and 0.3
@@ -26,12 +24,12 @@
 package Vend::Server;
 
 use vars qw($VERSION);
-$VERSION = substr(q$Revision: 2.93 $, 10);
+$VERSION = '2.106';
 
 use Cwd;
 use POSIX qw(setsid strftime);
 use Vend::Util;
-use Vend::CharSet;
+use Vend::CharSet qw/ to_internal decode_urlencode default_charset /;
 use Fcntl;
 use Errno qw/:POSIX/;
 use Config;
@@ -63,27 +61,29 @@ sub new {
 }
 
 my @Map = qw/
-    authorization      AUTHORIZATION
-    content_length     CONTENT_LENGTH
-    content_type       CONTENT_TYPE
-    content_encoding   HTTP_CONTENT_ENCODING
-    cookie             HTTP_COOKIE
-    http_host          HTTP_HOST
-    path_info          PATH_INFO
-    pragma             HTTP_PRAGMA
-    query_string       QUERY_STRING
-    referer            HTTP_REFERER
-    remote_addr        REMOTE_ADDR
-    remote_host        REMOTE_HOST
-    remote_user        REMOTE_USER
-    request_method     REQUEST_METHOD
-    request_uri        REQUEST_URI
-    script_name        SCRIPT_NAME
-    secure             HTTPS
-    server_name        SERVER_NAME
-    server_host        HTTP_HOST
-    server_port        SERVER_PORT
-    useragent          HTTP_USER_AGENT
+    authorization         AUTHORIZATION
+    content_length        CONTENT_LENGTH
+    content_type          CONTENT_TYPE
+    content_encoding      HTTP_CONTENT_ENCODING
+    cookie                HTTP_COOKIE
+    http_host             HTTP_HOST
+    http_x_forwarded_for  HTTP_X_FORWARDED_FOR
+    path_info             PATH_INFO
+    pragma                HTTP_PRAGMA
+    query_string          QUERY_STRING
+    referer               HTTP_REFERER
+    remote_addr           REMOTE_ADDR
+    remote_host           REMOTE_HOST
+    remote_user           REMOTE_USER
+    request_method        REQUEST_METHOD
+    request_uri           REQUEST_URI
+    script_name           SCRIPT_NAME
+    secure                HTTPS
+    server_name           SERVER_NAME
+    server_host           HTTP_HOST
+    server_port           SERVER_PORT
+    useragent             HTTP_USER_AGENT
+
 /;
 
 my @RedirMap = qw/
@@ -181,8 +181,10 @@ sub map_misc_cgi {
 	$CGI::host = $CGI::remote_host || $CGI::remote_addr;
 	$CGI::user = $CGI::remote_user;
 
+	my $server_host_without_port = $CGI::server_host;
+	$server_host_without_port =~ s/:.*// if $Global::FullUrlIgnorePort;
 	$CGI::script_path = $CGI::script_name;
-	$CGI::script_name = $CGI::server_host . $CGI::script_path
+	$CGI::script_name = $server_host_without_port . $CGI::script_path
 		if $Global::FullUrl;
 }
 
@@ -247,12 +249,63 @@ EOF
 #::logDebug("CGI::query_string=" . $CGI::query_string);
 #::logDebug("entity=" . ${$h->{entity}});
 
+#::logDebug("Check robot UA=$Global::RobotUA IP=$Global::RobotIP");
+	if ($Global::RobotIP and $CGI::remote_addr =~ $Global::RobotIP) {
+#::logDebug("It is a robot by IP!");
+		$Vend::Robot = 1;
+	}
+	elsif ($Global::HostnameLookups && $Global::RobotHost) {
+		if (!$CGI::remote_host && $CGI::remote_addr) {
+			$CGI::remote_host = gethostbyaddr(Socket::inet_aton($CGI::remote_addr),Socket::AF_INET);
+			$CGI::host = $CGI::remote_host || $CGI::remote_addr;
+		}
+		if ($CGI::remote_host && $CGI::remote_host =~ $Global::RobotHost) {
+#::logDebug("It is a robot by host!");
+			$Vend::Robot = 1;
+		}
+	}
+	unless ($Vend::Robot) { 
+		if ($Global::NotRobotUA and $CGI::useragent =~ $Global::NotRobotUA) {
+			# do nothing
+		}
+		elsif ($Global::RobotUA and $CGI::useragent =~ $Global::RobotUA) {
+#::logDebug("It is a robot by UA!");
+			$Vend::Robot = 1;
+		}
+	}
+
+	$CGI::values{mv_tmp_session} ||= 1 if $Vend::Robot;
+}
+
+# This is called by parse_multipart
+# Doesn't do unhexify
+sub store_cgi_kv {
+	my ($key, $value) = @_;
+
+	$key = lc ($key) if
+		$Global::DowncaseVarname
+		&& $Global::DowncaseVarname =~ /\b$key\b/i;
+
+	$key = $::IV->{$key} if defined $::IV->{$key};
+	if(defined $CGI::values{$key} and ! defined $::SV{$key}) {
+		$CGI::values{$key} = "$CGI::values{$key}\0$value";
+		push ( @{$CGI::values_array{$key}}, $value)
+	}
+	else {
+		$CGI::values{$key} = $value;
+		$CGI::values_array{$key} = [$value];
+	}
+}
+
+sub parse_cgi {
+	my $h = shift;
+
 	my $request_method = "\U$CGI::request_method";
 	if ($request_method eq 'POST') {
 #::logDebug("content type header: " . $CGI::content_type);
 		## check for valid content type
-		if ($CGI::content_type =~ m{^(?:multipart/form-data|application/x-www-form-urlencoded|application/xml)\b}i) {
-			parse_post(\$CGI::query_string)
+		if ($CGI::content_type =~ m{^(?:multipart/form-data|application/x-www-form-urlencoded|application/xml|application/json)\b}i) {
+			parse_post(\$CGI::query_string, 1)
 				if $Global::TolerateGet;
 			parse_post($h->{entity});
 		}
@@ -282,52 +335,10 @@ EOF
 	else {
 		 parse_post(\$CGI::query_string);
 	}
-
-	return if $CGI::values{mv_tmp_session};
-
-#::logDebug("Check robot UA=$Global::RobotUA IP=$Global::RobotIP");
-	if ($Global::RobotIP and $CGI::remote_addr =~ $Global::RobotIP) {
-#::logDebug("It is a robot by IP!");
-		$CGI::values{mv_tmp_session} = 1;
-	}
-	elsif ($Global::HostnameLookups && $Global::RobotHost) {
-		if (!$CGI::remote_host && $CGI::remote_addr) {
-			$CGI::remote_host = gethostbyaddr(Socket::inet_aton($CGI::remote_addr),Socket::AF_INET);
-			$CGI::host = $CGI::remote_host || $CGI::remote_addr;
-		}
-		if ($CGI::remote_host && $CGI::remote_host =~ $Global::RobotHost) {
-#::logDebug("It is a robot by host!");
-			$CGI::values{mv_tmp_session} = 1;
-		}
-	}
-	unless ($CGI::values{mv_tmp_session}) { 
-		if ($Global::NotRobotUA and $CGI::useragent =~ $Global::NotRobotUA) {
-			# do nothing
-		}
-		elsif ($Global::RobotUA and $CGI::useragent =~ $Global::RobotUA) {
-#::logDebug("It is a robot by UA!");
-			$CGI::values{mv_tmp_session} = 1;
-		}
-	}
-}
-
-# This is called by parse_multipart
-# Doesn't do unhexify
-sub store_cgi_kv {
-	my ($key, $value) = @_;
-	$key = $::IV->{$key} if defined $::IV->{$key};
-	if(defined $CGI::values{$key} and ! defined $::SV{$key}) {
-		$CGI::values{$key} = "$CGI::values{$key}\0$value";
-		push ( @{$CGI::values_array{$key}}, $value)
-	}
-	else {
-		$CGI::values{$key} = $value;
-		$CGI::values_array{$key} = [$value];
-	}
 }
 
 sub parse_post {
-	my $sref = shift;
+	my ($sref, $is_get) = @_;
 	return unless length $$sref;
 
 	my (@pairs, $pair, $key, $value, $charset);
@@ -336,12 +347,12 @@ sub parse_post {
 		$charset = $2;
 	}
 	else {
-		$charset = Vend::CharSet->default_charset();
+		$charset = default_charset();
 	}
 
 	$CGI::values{mv_form_charset} = $charset;
 
-	if ($CGI::content_type =~ m{^multipart/}i) {
+	if ($CGI::content_type =~ m{^multipart/}i && ! $is_get) {
 		return parse_multipart($sref) if $CGI::useragent !~ /MSIE\s+5/i;
 		# try and work around an apparent IE5 bug that sends the content type
 		# of the next POST after a multipart/form POST as multipart also -
@@ -383,11 +394,17 @@ sub parse_post {
 			};
 
 #::logDebug("incoming --> $key");
+		$key = lc ($key) if
+			$Global::DowncaseVarname
+			&& $Global::DowncaseVarname =~ /\b$key\b/i;
+
 		$key = $::IV->{$key} if defined $::IV->{$key};
-		$key = Vend::CharSet->decode_urlencode($key, $charset);
+
+		Vend::CharSet::decode_urlencode(\$key, $charset);
+
 #::logDebug("mapping  --> $key");
 		if ($key) {
-			$value = Vend::CharSet->decode_urlencode($value, $charset);
+			decode_urlencode(\$value, $charset);
 			# Handle multiple keys
 			if(defined $CGI::values{$key} and ! defined $::SV{$key}) {
 				$CGI::values{$key} = "$CGI::values{$key}\0$value";
@@ -463,14 +480,21 @@ sub parse_multipart {
 			my ($charset) = $header{'Content-Type'} =~ / charset="?([-a-zA-Z0-9]+)"?/;
 
 			$content_type ||= 'text/plain';
-			$charset ||= Vend::CharSet->default_charset();
-
-			if ($content_type =~ m{^text/}i) {
-				$data = Vend::CharSet->to_internal($charset, $data);
+			$charset ||= default_charset();
+			
+			if ($content_type =~ m{^text/}i && ($::Variable->{MV_UTF8} || $Global::Variable->{MV_UTF8})) {
+				Vend::CharSet::to_internal($charset, \$data);
+				# use our character set instead of the client's one
+				# to store the file
+				$charset = default_charset();
+			}
+			else {
+				$charset = 'raw';
 			}
 
 			if($filename) {
 				$CGI::file{$param} = $data;
+				$CGI::file_encoding{$param} = $charset;
 				$data = $filename;
 			}
 			else {
@@ -492,6 +516,9 @@ sub create_cookie {
 				($::Instance->{CookieName} || 'MV_SESSION_ID'),
 				defined $::Instance->{ClearCookie} ? '' : $Vend::SessionName,
 				$Vend::Expire || undef,
+				undef,
+				undef,
+				$Vend::Cfg->{SessionCookieSecure} ? $CGI::secure : undef,
 			]
 		unless $Vend::CookieID;
 	push @jar, @{$::Instance->{Cookies}}
@@ -538,9 +565,13 @@ sub canon_status {
 
 sub respond {
 	# $body is now a reference
-    my ($s, $body) = @_;
+	my ($s, $body) = @_;
 #show_times("begin response send") if $Global::ShowTimes;
-	my $response_charset = Vend::CharSet->default_charset();
+
+	# Safe kludge: duplicate Vend::CharSet::default_charset method here
+	# so that $Document->send() will work from within Safe
+	my $c = $Global::Selector{$CGI::script_name};
+	my $response_charset = $c->{Variable}{MV_HTTP_CHARSET} || $Global::Variable->{MV_HTTP_CHARSET};
 
 	my $status;
 	return if $Vend::Sent;
@@ -560,15 +591,40 @@ sub respond {
 
 	$Vend::StatusLine =~ s/\s*$/\r\n/ if $Vend::StatusLine;
 
+	# NOTE: if we're supporting arbitrary encodings here in the
+	# response_charset, we should really be setting the binmode to
+	# :encoding($response_charset);  if we're considering the case of
+	# UTF-8 vs undeclared, we should set the response charset to UTF-8
+	# iff MV_UTF8 is set, otherwise omit the charset declaration
+	# entirely.
+
+	if (
+		$response_charset =~ /^utf-?8$/i
+		and (
+			! $Vend::StatusLine
+			or $Vend::StatusLine =~ m{^Content-Type: text/}i
+		)
+	) {
+		binmode(MESSAGE, ':utf8');
+	}
+
 	if(! $s and $Vend::StatusLine) {
-		$Vend::StatusLine .= ($Vend::StatusLine =~ /^Content-Type:/im)
-							? '' : "\r\nContent-Type: text/html; charset=$response_charset\r\n";
+		if ($Vend::StatusLine !~ /^Content-Type:/im) {
+		$Vend::StatusLine .= "\r\nContent-Type: text/html";
+		if ($response_charset) {
+			$Vend::StatusLine .= "; charset=$response_charset\r\n";
+		}
+
+		else {
+			$Vend::StatusLine .= "\r\n";
+		}
+	}
 
 # TRACK
-        $Vend::StatusLine .= "X-Track: " . $Vend::Track->header() . "\r\n"
+		$Vend::StatusLine .= "X-Track: " . $Vend::Track->header() . "\r\n"
 			if $Vend::Track and $Vend::Cfg->{UserTrack};
-# END TRACK        
-        $Vend::StatusLine .= "Pragma: no-cache\r\n"
+# END TRACK
+		$Vend::StatusLine .= "Pragma: no-cache\r\n"
 			if delete $::Scratch->{mv_no_cache};
 		print MESSAGE canon_status($Vend::StatusLine);
 		print MESSAGE "\r\n";
@@ -579,7 +635,7 @@ sub respond {
 		return;
 	}
 
-    my $fh = $s->{fh};
+	my $fh = $s->{fh};
 
 # SUNOSDIGITAL
 #	 Fix for SunOS, Ultrix, Digital UNIX
@@ -615,10 +671,10 @@ sub respond {
 		my $save = select $fh;
 		$| = 1;
 		select $save;
-        $Vend::StatusLine .= "\r\nX-Track: " . $Vend::Track->header() . "\r\n"
+		$Vend::StatusLine .= "\r\nX-Track: " . $Vend::Track->header() . "\r\n"
 			if $Vend::Track and $Vend::Cfg->{UserTrack};
 # END TRACK                            
-        $Vend::StatusLine .= "Pragma: no-cache\r\n"
+		$Vend::StatusLine .= "Pragma: no-cache\r\n"
 			if delete $::Scratch->{mv_no_cache};
 		$status = '200 OK' if ! $status;
 		if(defined $Vend::StatusLine) {
@@ -640,7 +696,6 @@ sub respond {
 			and $Vend::Cfg->{Cookies}
 		)
 	{
-
 		my @domains;
 		@domains = ('');
 		my @paths;
@@ -671,26 +726,31 @@ sub respond {
 			}
 		}
 		$::Instance->{CookiesSet} = delete $::Instance->{Cookies};
-    }
+	}
 
-    if (defined $Vend::StatusLine) {
+	if (defined $Vend::StatusLine) {
 		print $fh canon_status($Vend::StatusLine);
 	}
 	elsif(! $Vend::ResponseMade) {        
-		print $fh canon_status("Content-Type: text/html; charset=$response_charset");
-# TRACK        
-        print $fh canon_status("X-Track: " . $Vend::Track->header())
+		if ($response_charset) {
+			print $fh canon_status("Content-Type: text/html; charset=$response_charset");
+		}
+		else {
+			print $fh canon_status("Content-Type: text/html");
+		}
+# TRACK
+		print $fh canon_status("X-Track: " . $Vend::Track->header())
 			if $Vend::Track and $Vend::Cfg->{UserTrack};
 # END TRACK
 	}
 	print $fh canon_status("Pragma: no-cache")
 		if delete $::Scratch->{mv_no_cache};
 
-    print $fh "\r\n";
-    print $fh $$body;
+	print $fh "\r\n";
+	print $fh $$body;
 	print $rfh $$body if $rfh;
 #show_times("end response send") if $Global::ShowTimes;
-    $Vend::ResponseMade = 1;
+	$Vend::ResponseMade = 1;
 }
 
 sub _read {
@@ -942,7 +1002,8 @@ sub connection {
     	or return 0;
     show_times('end cgi read') if $Global::ShowTimes;
 
-    binmode(MESSAGE, ':utf8') if $::Variable->{MV_UTF8};
+    # NOTE to self: this may not be necessary, but not sure of the scoping of MESSAGE
+    binmode(MESSAGE, ':raw');
 
     my $http = new Vend::Server \*MESSAGE, \%env, \$entity;
 
@@ -961,6 +1022,11 @@ sub connection {
     $display .= "($show_in_ps)" if $show_in_ps;
 
     set_process_name($display);
+
+    Sys::Syslog::closelog(), undef $Vend::SysLogReady
+        if $Vend::SysLogReady;
+
+    return;
 }
 
 ## Signals
@@ -1016,31 +1082,20 @@ my ($Sig_inc, $Sig_dec, $Counter);
 sub sig_int_or_term {
 	$Signal_Terminate = 1;
 
-	my $term_count = 0;
-	TERM: {
-		my %seen;
-		my @pids =
-			grep { !$seen{$_}++ }
-				(keys %Page_pids, keys %Starting_pids);
+	my (%seen, $all_gone);
 
-		last TERM unless @pids;
+	my @pids =
+		grep { !$seen{$_}++ }
+			(keys %Page_pids, keys %Starting_pids);
 
-		kill TERM => $_ for @pids;
-		sleep 1;
-
-		redo TERM unless ++$term_count > 3;
+	for (1..3) {
+		$all_gone = ! kill TERM => @pids
+			and last;
+		select (undef, undef, undef, 0.5);
 	}
 
-	KILL: {
-		my %seen;
-		my @pids =
-			grep { !$seen{$_}++ }
-				(keys %Page_pids, keys %Starting_pids);
-
-		last KILL unless @pids;
-
-		kill KILL => $_ for @pids;
-	}
+	kill KILL => @pids
+		unless $all_gone;
 
 	return;
 }
@@ -1388,14 +1443,14 @@ EOF
 				my ($cat, $delay, $jobname, @params) = grep /\S/, split /[\s,\0]+/, $value;
 				if ($delay && $delay < time()) {
 					# job expired
-#::logDebug ("Jobs @jobs expired ($delay vs $now)\n");
+#::logDebug ("Jobs expired ($delay vs $now)\n");
 				} elsif ($Job_servers++ >= $Global::Jobs->{MaxServers}) {
 						# no slot for job
 						$Job_servers--;
-#::logDebug ("Jobs @jobs queued, already %d jobs running/scheduled", $Job_servers);
+#::logDebug ("Jobs queued, already %d jobs running/scheduled", $Job_servers);
                         push(@queued_jobs, "$directive $value");
                 } else {
-#::logDebug ("Scheduled job @jobs for running");
+#::logDebug ("Scheduled job for running");
 					my %p;
 					for (@params) {
 					    my ($name, $value) = split /\=/, $_, 2;
@@ -2313,7 +2368,7 @@ sub setup_debug_log {
 		open(Vend::DEBUG, ">>$Global::DebugFile");
 		select Vend::DEBUG;
 		$| = 1;
-		print "Start DEBUG at " . localtime() . "\n";
+		print "Start DEBUG at " . localtime() . "\n" unless $Global::SysLog;
 	}
 	elsif (!$Global::DEBUG) {
 		# May as well turn warnings off, not going anywhere
@@ -2912,6 +2967,9 @@ sub run_server {
     my $next;
 #::logDebug("trying to run server");
 
+	@$Global::SocketFile = "$Global::VendRoot/etc/socket"
+		unless @$Global::SocketFile and $Global::SocketFile->[0];
+
 	if($Global::Variable->{MV_GETPPID_BROKEN}) {
 #::logDebug("setting getppid broken");
 		my $num = $Global::Variable->{MV_GETPPID_BROKEN} > 1
@@ -3065,11 +3123,67 @@ sub set_process_name {
     $base = 'interchange' if !$base or $base eq '1';
 
     if (defined $status) {
-	$0 = "$base: $status";
+        $0 = "$base: $status";
     }
     else {
-	$0 = $base;
+        $0 = $base;
     }
+
+    return;
+}
+
+# Disconnect child process from any dangling attachments to parent process.
+# Named after similar mod_perl routine.
+sub cleanup_for_exec {
+    # Release any open sockets
+    %fh_map = %vec_map = %s_vec_map = %s_fh_map = %ipc_socket = %unix_socket
+        = ();
+
+    # Close filehandles except for STDERR, used for debug log
+    close MESSAGE;
+    close SOCK;
+    open STDIN, '<', '/dev/null';
+    open STDOUT, '>>', '/dev/null';
+
+    return;
+}
+
+sub sever_database {
+    # Keep connection closings on the client from closing the
+    # database server, too.
+    child_process_dbi_prep();
+
+    # Clear any cached DBI handles
+    reset_per_fork();
+
+    # Prep new database connections for severed server
+    Vend::Data::open_database(1);
+    while (my ($db, $db_ref) = each %Vend::Database) {
+        delete $Vend::Interpolate::Db{$db};
+        $db_ref->close_table;
+        undef $db_ref->[$Vend::Table::DBI::DBI];
+    }
+
+    return;
+}
+
+sub child_process_dbi_prep {
+    # Because all clients with a common database connection will share
+    # the same db server, we want the child process not to destroy the
+    # database server when it disconnects.
+    eval {
+        my %d = DBI->installed_drivers;
+        for my $h (values %d) {
+            $_->{InactiveDestroy} = 1
+                for grep { defined } @{ $h->{ChildHandles} };
+        }
+    };
+
+    ::logGlobal(
+        'WARNING - error setting all DBI handles to InactiveDestroy: %s',
+        $@
+    )
+        if ($@);
 
     return;
 }

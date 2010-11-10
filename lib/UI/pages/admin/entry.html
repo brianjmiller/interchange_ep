@@ -67,7 +67,7 @@
 	## Browser check, standalone so syntax error will not
 	## kill init code
 	my $regex = $Variable->{MV_DHTML_BROWSER};
-	$regex ||= 'MSIE [5-9].*Windows|Mozilla.*Gecko';
+	$regex ||= 'MSIE [5-9].*Windows|Mozilla.*Gecko|Opera.*[7-9]';
 
 	$regex = qr/$regex/;
 	if($Session->{browser} =~ $regex) {
@@ -499,12 +499,13 @@ mv_nextpage=@@MV_PAGE@@
 <TABLE WIDTH=600>
 <TR><TD>
     <SELECT onChange="this.form.submit()" NAME=mv_shipmode>
-		]
-    [shipping
+	[shipping
 		label=1
 		free="[L]free of charge[/L]"
-		mode=| [data table=country key='[either][value country]' sf=selector col=shipmodes]|
-		]
+		mode=|
+			[data table=country key='[either][value country][or]__SHIP_DEFAULT_COUNTRY__[/either]' sf=selector col=shipmodes]
+		|
+	]
     </SELECT>
 </TD>
 <TD ALIGN=RIGHT><INPUT TYPE=submit VALUE="[L]Update[/L]"></TD>

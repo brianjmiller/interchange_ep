@@ -1,6 +1,6 @@
 # Vend::Payment::PRI - Interchange PRI support
 #
-# $Id: PRI.pm,v 1.6 2007-08-09 13:40:55 pajamian Exp $
+# $Id: PRI.pm,v 1.7 2009-03-16 19:34:01 jon Exp $
 #
 # Copyright (C) 2002-2007 Interchange Development Group
 # Copyright (C) 1999-2002 Red Hat, Inc.
@@ -51,9 +51,7 @@ Only one of these need be present and working.
 
 The Vend::Payment::PRI module implements the PRI() routine for using
 Payment Resources International payment services with Interchange. It is
-compatible on a call level with the other Interchange payment modules -- in
-theory (and even usually in practice) you could switch from CyberCash to PRI
-with a few configuration file changes.
+compatible on a call level with the other Interchange payment modules.
 
 To enable this module, place this directive in C<interchange.cfg>:
 
@@ -156,8 +154,6 @@ A good way to test this module is to set PRI_TEST_MODE to 3, then 2, then 1, the
 
 To generate errors in test mode (while using your test ID and regkey) simply enter transactions with bad data and see what happens.  PRI will supply you with a list of test credit card numbers and amounts that they are good for. 
 
-=over 4
-
 =item submit_url
 
 PRI uses different URLs depending on what type of transaction you are requesting, Sale, Recurring, Void etc..  The default URL for single sale transactions is
@@ -165,7 +161,7 @@ PRI uses different URLs depending on what type of transaction you are requesting
 	 https://webservices.primerchants.com/billing/TransactionCentral/processCC.asp?
 
 At this time, this is the only URL supported by this PRI module
-	 
+
 =back
 
 =head2 Troubleshooting

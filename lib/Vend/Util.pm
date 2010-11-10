@@ -1,8 +1,6 @@
 # Vend::Util - Interchange utility functions
 #
-# $Id: Util.pm,v 2.120 2008-09-26 14:57:58 racke Exp $
-# 
-# Copyright (C) 2002-2008 Interchange Development Group
+# Copyright (C) 2002-2009 Interchange Development Group
 # Copyright (C) 1996-2002 Red Hat, Inc.
 #
 # This program was originally based on Vend 0.2 and 0.3
@@ -26,9 +24,15 @@
 package Vend::Util;
 require Exporter;
 
+unless( $ENV{MINIVEND_DISABLE_UTF8} ) {
+	require Encode;
+	import Encode qw( is_utf8 encode_utf8 );
+}
+
 @ISA = qw(Exporter);
 
 @EXPORT = qw(
+	adjust_time
 	catfile
 	check_security
 	copyref
@@ -46,6 +50,7 @@ require Exporter;
 	generate_key
 	get_option_hash
 	hash_string
+	header_data_scrub
 	hexify
 	is_hash
 	is_no
@@ -87,11 +92,11 @@ use Fcntl;
 use Errno;
 use Text::ParseWords;
 require HTML::Entities;
-use Safe;
+use Vend::Safe;
 use Vend::File;
 use subs qw(logError logGlobal);
 use vars qw($VERSION @EXPORT @EXPORT_OK);
-$VERSION = substr(q$Revision: 2.120 $, 10);
+$VERSION = substr(q$Revision: 2.127 $, 10);
 
 my $Eval_routine;
 my $Eval_routine_file;
@@ -200,30 +205,9 @@ sub tabbed {
                           } @_);
 }
 
-# Finds common-log-style offset
-# Unproven, authoratative code welcome
-my $Offset;
-FINDOFFSET: {
-    my $now = time;
-    my ($gm,$gh,$gd,$gy) = (gmtime($now))[1,2,5,7];
-    my ($lm,$lh,$ld,$ly) = (localtime($now))[1,2,5,7];
-    if($gy != $ly) {
-        $gy < $ly ? $lh += 24 : $gh += 24;
-    }
-    elsif($gd != $ld) {
-        $gd < $ld ? $lh += 24 : $gh += 24;
-    }
-    $gh *= 100;
-    $lh *= 100;
-    $gh += $gm;
-    $lh += $lm;
-    $Offset = sprintf("%05d", $lh - $gh);
-    $Offset =~ s/0(\d\d\d\d)/+$1/;
-}
-
 # Returns time in HTTP common log format
 sub logtime {
-    return POSIX::strftime("[%d/%B/%Y:%H:%M:%S $Offset]", localtime());
+    return POSIX::strftime("[%d/%B/%Y:%H:%M:%S %z]", localtime());
 }
 
 sub format_log_msg {
@@ -234,7 +218,7 @@ sub format_log_msg {
     push @params, ($CGI::remote_host || $CGI::remote_addr || '-');
 	push @params, ($Vend::SessionName || '-');
 	push @params, ($CGI::user || '-');
-	push @params, logtime();
+	push @params, logtime() unless $Global::SysLog;
 
 	# Catalog name
 	my $string = ! defined $Vend::Cfg ? '-' : ($Vend::Cat || '-');
@@ -596,7 +580,12 @@ if(! $@) {
 	$Keysub = sub {
 					@_ = time() unless @_;
 					$Md->reset();
-					$Md->add(@_);
+					if($Global::UTF8) {
+						$Md->add(map encode_utf8($_), @_);
+					}
+					else {
+						$Md->add(@_);
+					}
 					$Md->hexdigest();
 				};
 }
@@ -846,7 +835,7 @@ sub string_to_ref {
 	if($MVSAFE::Safe) {
 		return eval $string;
 	}
-	my $safe = $Vend::Interpolate::safe_safe || new Safe;
+	my $safe = $Vend::Interpolate::safe_safe || new Vend::Safe;
 	return $safe->reval($string);
 }
 
@@ -1042,16 +1031,16 @@ sub parse_locale {
 	
 	if($Vend::Cfg->{Locale}) {
 		my $key;
-		$$r =~ s~\[L(\s+([^\]]+))?\]([\000-\377]*?)\[/L\]~
+		$$r =~ s~\[L(\s+([^\]]+))?\]((?s:.)*?)\[/L\]~
 						$key = $2 || $3;		
 						defined $Vend::Cfg->{Locale}{$key}
 						?  ($Vend::Cfg->{Locale}{$key})	: $3 ~eg;
-		$$r =~ s~\[LC\]([\000-\377]*?)\[/LC\]~
+		$$r =~ s~\[LC\]((?s:.)*?)\[/LC\]~
 						find_locale_bit($1) ~eg;
 		undef $Lang;
 	}
 	else {
-		$$r =~ s~\[L(?:\s+[^\]]+)?\]([\000-\377]*?)\[/L\]~$1~g;
+		$$r =~ s~\[L(?:\s+[^\]]+)?\]((?s:.)*?)\[/L\]~$1~g;
 	}
 
 	# return scalar string if one get passed initially
@@ -1113,10 +1102,17 @@ sub readin {
 		logError( "Too many .. in file path '%s' for security.", $file );
 		$file = find_special_page('violation');
 	}
-	$file =~ s#//+#/#g;
-	$file =~ s#/+$##g;
-	($pathdir = $file) =~ s#/[^/]*$##;
-	$pathdir =~ s:^/+::;
+
+	if(index($file, '/') < 0) {
+		$pathdir = '';
+	}
+	else {
+		$file =~ s#//+#/#g;
+		$file =~ s#/+$##g;
+		($pathdir = $file) =~ s#/[^/]*$##;
+		$pathdir =~ s:^/+::;
+	}
+
 	my $try;
 	my $suffix = $Vend::Cfg->{HTMLsuffix};
 	my $db_tried;
@@ -1183,7 +1179,7 @@ sub readin {
 
 		if (open(MVIN, "< $fn")) {
 			binmode(MVIN) if $Global::Windows;
-			binmode(MVIN, ":utf8") if $::Variable->{MV_UTF8};
+			binmode(MVIN, ":utf8") if $::Variable->{MV_UTF8} || $Global::Variable->{MV_UTF8};
 			undef $/;
 			$contents = <MVIN>;
 			close(MVIN);
@@ -1320,6 +1316,11 @@ sub vendUrl {
 		$opt->{anchor} =~ s/^#//;
 		$r .= '#' . $opt->{anchor};
 	}
+
+	# return full-path portion of the URL
+	if ($opt->{path_only}) {
+		$r =~ s!^https?://[^/]*!!i;
+	}
 	return $r;
 } 
 
@@ -1431,16 +1432,7 @@ sub check_authorization {
 						);
 	my $cmp_pw;
 	my $use_crypt = 1;
-	if(!defined $Vend::Cfg) {
-		$pwinfo = $Global::AdminUser;
-		$pwinfo =~ s/^\s+//;
-		$pwinfo =~ s/\s+$//;
-		my (%compare) = split /[\s:]+/, $pwinfo;
-		return undef unless $compare{$user};
-		$cmp_pw = $compare{$user};
-		undef $use_crypt if $Global::Variable->{MV_NO_CRYPT};
-	}
-	elsif(	$user eq $Vend::Cfg->{RemoteUser}	and
+	if(	$user eq $Vend::Cfg->{RemoteUser}	and
 			$Vend::Cfg->{Password}					)
 	{
 		$cmp_pw = $Vend::Cfg->{Password};
@@ -1532,7 +1524,8 @@ ALERT: Attempt to %s at %s from:
 	SCRIPT_NAME  %s
 	PATH_INFO    %s
 EOF
-		logGlobal ({level => 'auth'}, $fmt,
+		logGlobal({ level => 'warning' },
+						$fmt,
 						$msg,
 						$CGI::script_name,
 						$CGI::host,
@@ -1553,7 +1546,7 @@ EOF
 		ne  $Vend::Cfg->{Password})
 	{
 		::logGlobal(
-				{level => 'auth'},
+				{ level => 'warning' },
 				"ALERT: Password mismatch, attempt to %s at %s from %s",
 				$msg,
 				$CGI::script_name,
@@ -1578,7 +1571,7 @@ ALERT: Attempt to %s %s per user name:
 EOF
 
 		::logGlobal(
-			{level => 'auth'},
+			{ level => 'warning' },
 			$fmt,
 			$CGI::script_name,
 			$msg,
@@ -1606,8 +1599,8 @@ Attempt to %s on %s, secure operations disabled.
 	SCRIPT_NAME  %s
 	PATH_INFO    %s
 EOF
-		::logGlobal (
-				{level => 'auth'},
+		::logGlobal(
+				{ level => 'warning' },
 				$fmt,
 				$msg,
 				$CGI::script_name,
@@ -1641,7 +1634,8 @@ sub find_special_page {
 # Log the error MSG to the error file.
 
 sub logDebug {
-    return unless $Global::DebugFile;
+	return unless $Global::DebugFile;
+
 	if(my $re = $Vend::Cfg->{DebugHost}) {
 		return unless
 			 Net::IP::Match::Regexp::match_ip($CGI::remote_addr, $re);
@@ -1651,15 +1645,17 @@ sub logDebug {
 		return unless $sub->();
 	}
 
-    if(my $tpl = $Global::DebugTemplate) {
-        my %debug; 
+	my $msg;
+
+	if (my $tpl = $Global::DebugTemplate) {
+		my %debug;
 		$tpl = POSIX::strftime($tpl, localtime());
-		$tpl =~ s/\s*$/\n/;
+		$tpl =~ s/\s*$//;
 		$debug{page} = $Global::Variable->{MV_PAGE};
 		$debug{tag} = $Vend::CurrentTag;
 		$debug{host} = $CGI::host || $CGI::remote_addr;
 		$debug{remote_addr} = $CGI::remote_addr;
-		$debug{catalog} = $Vend::Catalog;
+		$debug{catalog} = $Vend::Cat;
         if($tpl =~ /\{caller\d+\}/i) {
             my @caller = caller();
             for(my $i = 0; $i < @caller; $i++) {
@@ -1668,12 +1664,20 @@ sub logDebug {
         }
 		$debug{message} = errmsg(@_);
 
-        print Vend::Interpolate::tag_attr_list($tpl, \%debug, 1);
-    }
-    else {
-        print caller() . ":debug: ", errmsg(@_), "\n";
-    }
-    return;
+		$msg = Vend::Interpolate::tag_attr_list($tpl, \%debug, 1);
+	}
+	else {
+		$msg = caller() . ":debug: " . errmsg(@_);
+	}
+
+	if ($Global::SysLog) {
+		logGlobal({ level => 'debug' }, $msg);
+	}
+	else {
+		print $msg, "\n";
+	}
+
+	return;
 }
 
 sub errmsg {
@@ -1708,139 +1712,241 @@ sub show_times {
 	logDebug("$message: " . join " ", @times);
 }
 
-sub logGlobal {
-	return 1 if $Vend::ExternalProgram;
-    my($msg) = shift;
-	my $opt;
-	if(ref $msg) {
-		$opt = $msg;
-		$msg = shift;
+# This %syslog_constant_map is an attempt to work around a strange problem
+# where the eval inside &Sys::Syslog::xlate fails, which then croaks.
+# The cause of this freakish problem is still to be determined.
+
+my %syslog_constant_map;
+
+sub setup_syslog_constant_map {
+	for (
+		(map { "local$_" } (0..7)),
+		qw(
+			auth
+			authpriv
+			cron
+			daemon
+			ftp
+			kern
+			lpr
+			mail
+			news
+			syslog
+			user
+			uucp
+
+			emerg
+			alert
+			crit
+			err
+			warning
+			notice
+			info
+			debug
+		)
+	) {
+		$syslog_constant_map{$_} = Sys::Syslog::xlate($_);
 	}
-	if(@_) {
-		$msg = errmsg($msg, @_);
-	}
-	my $nolock;
-
-	my $fn = $Global::ErrorFile;
-	my $flags;
-	if($opt and $Global::SysLog) {
-		$fn = "|" . ($Global::SysLog->{command} || 'logger');
-
-		my $prioritized;
-		my $tagged;
-		my $facility = 'local3';
-		if($opt->{level} and defined $Global::SysLog->{$opt->{level}}) {
-			my $stuff =  $Global::SysLog->{$opt->{level}};
-			if($stuff =~ /\./) {
-				$facility = $stuff;
-			}
-			else {
-				$facility .= ".$stuff";
-			}
-			$prioritized = 1;
-		}
-
-		my $tag = $Global::SysLog->{tag} || 'interchange';
-
-		$facility .= ".info" unless $prioritized;
-
-		$fn .= " -p $facility";
-		$fn .= " -t $tag" unless "\L$tag" eq 'none';
-
-		if($opt->{socket}) {
-			$fn .= " -u $opt->{socket}";
-		}
-	}
-
-	my $nl = ($opt and $opt->{strip}) ? '' : "\n";
-
-	print "$msg$nl" if $Global::Foreground and ! $Vend::Log_suppress && ! $Vend::Quiet;
-
-	$fn =~ s/^([^|>])/>>$1/
-		or $nolock = 1;
-
-    $msg = format_log_msg($msg) if ! $nolock;
-
-	$Vend::Errors .= $msg if $Global::DisplayErrors;
-
-    eval {
-		# We have checked for beginning > or | previously
-		open(MVERROR, $fn) or die "open\n";
-		if(! $nolock) {
-			lockfile(\*MVERROR, 1, 1) or die "lock\n";
-			seek(MVERROR, 0, 2) or die "seek\n";
-		}
-		print(MVERROR $msg, "\n") or die "write to\n";
-		if(! $nolock) {
-			unlockfile(\*MVERROR) or die "unlock\n";
-		}
-		close(MVERROR) or die "close\n";
-    };
-    if ($@) {
-		chomp $@;
-		print "\nCould not $@ error file '";
-		print $Global::ErrorFile, "':\n$!\n";
-		print "to report this error:\n", $msg;
-		exit 1;
-    }
+	return;
 }
 
-
-# Log the error MSG to the error file.
-
-sub logError {
-    my $msg = shift;
-	return unless $Vend::Cfg;
+sub logGlobal {
+	return 1 if $Vend::ExternalProgram;
 
 	my $opt;
-	if(ref $_[0]) {
-		$opt = shift(@_);
+	my $msg = shift;
+	if (ref $msg) {
+		$opt = $msg;
+		$msg = shift;
 	}
 	else {
 		$opt = {};
 	}
 
-    if(! $opt->{file}) {
-        my $tag = $opt->{tag} || $msg;
-        if(my $dest = $Vend::Cfg->{ErrorDestination}{$tag}) {
-            $opt->{file} = $dest;
-        }
-    }
+	$msg = errmsg($msg, @_) if @_;
 
-	$opt->{file} ||= $Vend::Cfg->{ErrorFile};
+	$Vend::Errors .= $msg . "\n" if $Global::DisplayErrors;
 
-	if(@_) {
-		$msg = errmsg($msg, @_);
+	my $nl = $opt->{strip} ? '' : "\n";
+	print "$msg$nl"
+		if $Global::Foreground
+			and ! $Vend::Log_suppress
+			and ! $Vend::Quiet
+			and ! $Global::SysLog;
+
+	my ($fn, $facility, $level);
+	if ($Global::SysLog) {
+		$facility = $Global::SysLog->{facility} || 'local3';
+		$level    = $opt->{level} || 'info';
+
+		# remap deprecated synonyms supported by logger(1)
+		my %level_map = (
+			error => 'err',
+			panic => 'emerg',
+			warn  => 'warning',
+		);
+
+		# remap levels according to any user-defined global configuration
+		my $level_cfg;
+		if ($level_cfg = $Global::SysLog->{$level_map{$level} || $level}) {
+			if ($level_cfg =~ /(.+)\.(.+)/) {
+				($facility, $level) = ($1, $2);
+			}
+			else {
+				$level = $level_cfg;
+			}
+		}
+		$level = $level_map{$level} if $level_map{$level};
+
+		my $tag = $Global::SysLog->{tag} || 'interchange';
+
+		my $socket = $opt->{socket} || $Global::SysLog->{socket};
+
+		if ($Global::SysLog->{internal}) {
+			unless ($Vend::SysLogReady) {
+				eval {
+					use Sys::Syslog ();
+					if ($socket) {
+						my ($socket_path, $types) = ($socket =~ /^(\S+)(?:\s+(.*))?/);
+						$types ||= 'native,tcp,udp,unix,pipe,stream,console';
+						my $type_array = [ grep /\S/, split /[,\s]+/, $types ];
+						Sys::Syslog::setlogsock($type_array, $socket_path) or die "Error calling setlogsock\n";
+					}
+					Sys::Syslog::openlog $tag, 'ndelay,pid', $facility;
+				};
+				if ($@) {
+					print "\nError opening syslog: $@\n";
+					print "to report this error:\n", $msg;
+					exit 1;
+				}
+				setup_syslog_constant_map() unless %syslog_constant_map;
+				$Vend::SysLogReady = 1;
+			}
+		}
+		else {
+			$fn = '|' . ($Global::SysLog->{command} || 'logger');
+			$fn .= " -p $facility.$level";
+			$fn .= " -t $tag" unless lc($tag) eq 'none';
+			$fn .= " -u $socket" if $socket;
+		}
+	}
+	else {
+		$fn = $Global::ErrorFile;
 	}
 
-	print "$msg\n" if $Global::Foreground and ! $Vend::Log_suppress && ! $Vend::Quiet;
+	if ($fn) {
+		my $lock;
+		if ($fn =~ s/^([^|>])/>>$1/) {
+			$lock = 1;
+			$msg = format_log_msg($msg);
+		}
+
+		eval {
+			# We have checked for beginning > or | previously
+			open(MVERROR, $fn) or die "open\n";
+			if ($lock) {
+				lockfile(\*MVERROR, 1, 1) or die "lock\n";
+				seek(MVERROR, 0, 2) or die "seek\n";
+			}
+			print(MVERROR $msg, "\n") or die "write to\n";
+			if ($lock) {
+				unlockfile(\*MVERROR) or die "unlock\n";
+			}
+			close(MVERROR) or die "close\n";
+		};
+		if ($@) {
+			chomp $@;
+			print "\nCould not $@ error file '$Global::ErrorFile':\n$!\n";
+			print "to report this error:\n", $msg, "\n";
+			exit 1;
+		}
+
+	}
+	elsif ($Vend::SysLogReady) {
+		eval {
+			# avoid eval in Sys::Syslog::xlate() by using cached constants where possible
+			my $level_mapped = $syslog_constant_map{$level};
+			$level_mapped = $level unless defined $level_mapped;
+			my $facility_mapped = $syslog_constant_map{$facility};
+			$facility_mapped = $facility unless defined $facility_mapped;
+			my $priority = "$level_mapped|$facility_mapped";
+			Sys::Syslog::syslog $priority, $msg;
+		};
+	}
+
+	return 1;
+}
+
+sub logError {
+	return unless $Vend::Cfg;
+
+	my $msg = shift;
+	my $opt;
+	if (ref $_[0]) {
+		$opt = shift;
+	}
+	else {
+		$opt = {};
+	}
+
+	unless ($Global::SysLog) {
+		if (! $opt->{file}) {
+			my $tag = $opt->{tag} || $msg;
+			if (my $dest = $Vend::Cfg->{ErrorDestination}{$tag}) {
+				$opt->{file} = $dest;
+			}
+		}
+		$opt->{file} ||= $Vend::Cfg->{ErrorFile};
+	}
+
+	$msg = errmsg($msg, @_) if @_;
+
+	print "$msg\n"
+		if $Global::Foreground
+			and ! $Vend::Log_suppress
+			and ! $Vend::Quiet
+			and ! $Global::SysLog;
 
 	$Vend::Session->{last_error} = $msg;
 
-    $msg = format_log_msg($msg) unless $msg =~ s/^\\//;
+	$msg = format_log_msg($msg) unless $msg =~ s/^\\//;
 
-	$Vend::Errors .= $msg
+	if ($Global::SysLog) {
+		logGlobal({ level => 'err' }, $msg);
+		return;
+	}
+
+	$Vend::Errors .= $msg . "\n"
 		if $Vend::Cfg->{DisplayErrors} || $Global::DisplayErrors;
 
-    eval {
-		open(MVERROR, ">> $opt->{file}")
-											or die "open\n";
-		lockfile(\*MVERROR, 1, 1)		or die "lock\n";
-		seek(MVERROR, 0, 2)				or die "seek\n";
-		print(MVERROR $msg, "\n")		or die "write to\n";
-		unlockfile(\*MVERROR)			or die "unlock\n";
-		close(MVERROR)					or die "close\n";
-    };
+    my $reason;
+    if (! allowed_file($opt->{file}, 1)) {
+        $@ = 'access';
+        $reason = 'prohibited by global configuration';
+    }
+    else {
+        eval {
+            open(MVERROR, '>>', $opt->{file})
+                                        or die "open\n";
+            lockfile(\*MVERROR, 1, 1)   or die "lock\n";
+            seek(MVERROR, 0, 2)         or die "seek\n";
+            print(MVERROR $msg, "\n")   or die "write to\n";
+            unlockfile(\*MVERROR)       or die "unlock\n";
+            close(MVERROR)              or die "close\n";
+        };
+    }
     if ($@) {
 		chomp $@;
 		logGlobal ({ level => 'info' },
 					"Could not %s error file %s: %s\nto report this error: %s",
 					$@,
 					$opt->{file},
-					$!,
+					$reason || $!,
 					$msg,
 				);
-    }
+		}
+
+	return;
 }
 
 # Front-end to log routines that ignores repeated identical
@@ -1872,8 +1978,7 @@ sub set_cookie {
     # Set expire to now + some time if expire string is something like
     # "30 days" or "7 weeks" or even "60 minutes"
 	if($expire =~ /^\s*\d+[\s\0]*[A-Za-z]\S*\s*$/) {
-		my $add = Vend::Config::time_to_seconds($expire);
-		$expire = time() + $add if $add;
+	    $expire = adjust_time($expire);
 	}
 
 	if (! $::Instance->{Cookies}) {
@@ -2254,6 +2359,104 @@ sub timecard_read {
 	return unpack('N',$rtime);
 }
 
+#
+# Adjusts a unix time stamp (2nd arg) by the amount specified in the first arg.  First arg should be
+# a number (signed integer or float) followed by one of second(s), minute(s), hour(s), day(s)
+# week(s) month(s) or year(s).  Second arg defaults to the current time.  If the third arg is true
+# the time will be compensated for daylight savings time (so that an adjustment of 6 months will
+# still cause the same time to be displayed, even if it is transgressing the DST boundary).
+#
+# This will accept multiple adjustments strung together, so you can do: "-5 days, 2 hours, 6 mins"
+# and the time will have thost amounts subtracted from it.  You can also add and subtract in the
+# same line, "+2 years -3 days".  If you specify a sign (+ or -) then that sign will remain in
+# effect until a new sign is specified on the line (so you can do,
+# "+5 years, 6 months, 3 days, -4 hours, 7 minutes").  The comma (,) between adjustments is
+# optional.
+#
+sub adjust_time {
+    my ($adjust, $time, $compensate_dst) = @_;
+    $time ||= time;
+
+    unless ($adjust =~ /^(?:\s*[+-]?\s*[\d\.]+\s*[a-z]*\s*,?)+$/i) {
+	::logError("adjust_time(): bad format: $adjust");
+	return $time;
+    }
+
+    # @times: 0: sec, 1: min, 2: hour, 3: day, 4: month, 5: year, 8: isdst
+    # 6,7: dow and doy, but mktime ignores these (and so do we).
+
+    # A note about isdst: localtime returns 1 if returned time is adjusted for dst and 0 otherwise.
+    # mktime expects the same, but if this is set to -1 mktime will determine if the date should be
+    # dst adjusted according to dst rules for the current timezone.  The way that we use this is we
+    # leave it set to the return value from locatime and we end up with a time that is adjusted by
+    # an absolute amount (so if you adjust by six months the actual time returned may be different
+    # but only because of DST).  If we want mktime to compensate for dst then we set this to -1 and
+    # mktime will make the appropriate adjustment for us (either add one hour or subtract one hour
+    # or leave the time the same).
+
+    my @times = localtime($time);
+    my $sign = 1;
+
+    foreach my $amount ($adjust =~ /([+-]?\s*[\d\.]+\s*[a-z]*)/ig) {
+	my $unit = 'seconds';
+	$amount =~ s/\s+//g;
+
+	if ($amount =~ s/^([+-])//)   { $sign = $1 eq '+' ? 1 : -1 }
+	if ($amount =~ s/([a-z]+)$//) { $unit = lc $1 }
+	$amount *= $sign;
+
+	# A week is simply 7 days.
+	if ($unit =~ /^w/) {
+	    $unit = 'days';
+	    $amount *= 7;
+	}
+
+	if ($unit =~ /^s/) { $times[0] += $amount }
+	elsif ($unit =~ /^mo/) { $times[4] += $amount } # has to come before min
+	elsif ($unit =~ /^m/) { $times[1] += $amount }
+	elsif ($unit =~ /^h/) { $times[2] += $amount }
+	elsif ($unit =~ /^d/) { $times[3] += $amount }
+	elsif ($unit =~ /^y/) { $times[5] += $amount }
+
+	else {
+	    ::logError("adjust_time(): bad unit: $unit");
+	    return $time;
+	}
+    }
+
+    if ($compensate_dst) { $times[8] = -1 }
+
+    # mktime can only handle integers, so we need to convert real numbers:
+    my @multip = (0, 60, 60, 24, 0, 12);
+    my $monfrac = 0;
+    foreach my $i (reverse 0..5) {
+	if ($times[$i] =~ /\./) {
+	    if ($multip[$i]) {
+		$times[$i-1] += ($times[$i] - int $times[$i]) * $multip[$i];
+	    }
+
+	    elsif ($i == 4) {
+		# Fractions of a month need some really extra special handling.
+		$monfrac = $times[$i] - int $times[$i];
+	    }
+
+	    $times[$i] = int $times[$i]
+	}
+    }
+
+    $time = POSIX::mktime(@times);
+
+    # This is how we handle a fraction of a month:
+    if ($monfrac) {
+	$times[4] += $monfrac > 0 ? 1 : -1;
+	my $timediff = POSIX::mktime(@times);
+	$timediff = int(abs($timediff - $time) * $monfrac);
+	$time += $timediff;
+    }
+
+    return $time;
+}
+
 sub backtrace {
     my $msg = "Backtrace:\n\n";
     my $frame = 1;
@@ -2285,6 +2488,16 @@ sub backtrace {
 
     ::logGlobal($msg);
     undef;
+}
+
+sub header_data_scrub {
+	my ($head_data) = @_;
+
+	## "HTTP Response Splitting" Exploit Fix
+	## http://www.securiteam.com/securityreviews/5WP0E2KFGK.html
+	$head_data =~ s/(?:%0[da]|[\r\n]+)+//ig;
+
+	return $head_data;
 }
 
 ### Provide stubs for former Vend::Util functions relocated to Vend::File
