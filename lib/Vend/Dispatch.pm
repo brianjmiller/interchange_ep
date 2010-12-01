@@ -1787,6 +1787,7 @@ EOF
 
 #::logDebug("path=$Vend::FinalPath mv_action=$CGI::values{mv_action}");
 
+       if (! $Vend::ResponseMade) {
   DOACTION: {
 	if (defined $CGI::values{mv_action}) {
 		$CGI::values{mv_todo} = $CGI::values{mv_action}
@@ -1847,11 +1848,11 @@ EOF
 
 	do_page() if $status;
 #show_times("end page display") if $Global::ShowTimes;
-
+		}
+	}
 	for my $routine (@{$Vend::Cfg->{CleanupRoutines}}) {
 		$routine->();
 	}
-  }
 
 # TRACK
 	$Vend::Track->filetrack() if $Vend::Track;
