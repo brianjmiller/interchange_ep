@@ -1,0 +1,44 @@
+From 09fd14788a5f46c0b1c40acbc3df144f30bfa029 Mon Sep 17 00:00:00 2001
+From: David Christensen <david@endpoint.com>
+Date: Wed, 1 Dec 2010 16:43:14 -0600
+Subject: [PATCH] Commit to support the MVC action system early abort
+
+NOTE: When updating against a future version of IC, you will need to
+apply the following patch for this to work properly with the MVC2
+action system.
+
+This file and caveat can be removed if/when this patch is absorbed
+into core IC.
+---
+ lib/Vend/Dispatch.pm |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/lib/Vend/Dispatch.pm b/lib/Vend/Dispatch.pm
+index d19a495..082aeb3 100644
+--- a/lib/Vend/Dispatch.pm
++++ b/lib/Vend/Dispatch.pm
+@@ -1787,6 +1787,7 @@ EOF
+ 
+ #::logDebug("path=$Vend::FinalPath mv_action=$CGI::values{mv_action}");
+ 
++       if (! $Vend::ResponseMade) {
+   DOACTION: {
+ 	if (defined $CGI::values{mv_action}) {
+ 		$CGI::values{mv_todo} = $CGI::values{mv_action}
+@@ -1847,11 +1848,11 @@ EOF
+ 
+ 	do_page() if $status;
+ #show_times("end page display") if $Global::ShowTimes;
+-
++		}
++	}
+ 	for my $routine (@{$Vend::Cfg->{CleanupRoutines}}) {
+ 		$routine->();
+ 	}
+-  }
+ 
+ # TRACK
+ 	$Vend::Track->filetrack() if $Vend::Track;
+-- 
+1.7.3.2.245.g03276
+
