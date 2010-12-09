@@ -3,6 +3,7 @@ var/log/*.log
 var/run/*
 src/config.h
 src/config.log
+src/config.status
 src/tlink
 src/tlink.127.0.0.1.7786
 src/vlink
