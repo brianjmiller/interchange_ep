@@ -1,0 +1,3 @@
+This is a pre-built Interchange (http://www.icdevgroup.org) intended to be used as a submodule when developing a site in DevCamps (http://www.devcamps.org).
+
+The source is built using a custom Perl package(s) from (http://packages.endpoint.com) against a CentOS/RHEL5 system but should be generally portable to others. The file README.patches contains further information on what is changed in the core IC source for building purposes.
