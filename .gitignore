@@ -1,6 +1,7 @@
 *.swp
 var/log/*.log
 var/run/*
+src/config.cache
 src/config.h
 src/config.log
 src/config.status
